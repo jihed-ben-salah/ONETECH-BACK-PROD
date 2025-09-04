@@ -1,0 +1,51 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual env
+venv/
+.env
+.env.*
+
+# Distribution / build
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Django
+/db.sqlite3
+/media/
+/staticfiles/
+# If you keep collected static committed later, comment the above line
+
+# Logs
+*.log
+
+# IDE / tooling
+.vscode/
+.idea/
+*.swp
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.coverage*
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Temporary
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Misc
+*.bak
+*.orig
+
+# Vercel / deployment artifacts
+.vercel/
