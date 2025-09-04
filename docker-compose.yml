@@ -1,0 +1,16 @@
+version: '3.9'
+services:
+  extraction_api:
+    build: .
+    container_name: extraction_api
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-pro}
+      DEBUG: "false"
+    volumes:
+      - ./media:/app/media
+    restart: unless-stopped
