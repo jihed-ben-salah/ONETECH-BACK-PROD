@@ -1,0 +1,73 @@
+name: Deploy to Azure Container Instances
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: onetech-backend-rg
+  AZURE_CONTAINER_GROUP: onetech-backend
+  ACR_NAME: onetechregistry
+  IMAGE_NAME: onetech-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Login to Azure Container Registry
+      run: az acr login --name ${{ env.ACR_NAME }}
+    
+    - name: Build and push Docker image
+      run: |
+        ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "loginServer" --output tsv)
+        docker build -t $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        docker build -t $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:latest .
+        docker push $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:latest
+    
+    - name: Deploy to Azure Container Instances
+      run: |
+        ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "loginServer" --output tsv)
+        ACR_USERNAME=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "username" --output tsv)
+        ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "passwords[0].value" --output tsv)
+        
+        az deployment group create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --template-file azure-deployment/aci-template.json \
+          --parameters \
+            containerGroupName=${{ env.AZURE_CONTAINER_GROUP }} \
+            containerImageName=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            registryServer=$ACR_LOGIN_SERVER \
+            registryUsername=$ACR_USERNAME \
+            registryPassword=$ACR_PASSWORD \
+            djangoSecretKey="${{ secrets.DJANGO_SECRET_KEY }}" \
+            googleApiKey="${{ secrets.GOOGLE_API_KEY }}" \
+            debug="false"
+    
+    - name: Get deployment URL
+      run: |
+        CONTAINER_FQDN=$(az deployment group show \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name aci-template \
+          --query "properties.outputs.containerFQDN.value" \
+          --output tsv)
+        echo "🌐 Application deployed at: http://$CONTAINER_FQDN:8000"
+    
+    - name: Test deployment
+      run: |
+        CONTAINER_FQDN=$(az deployment group show \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name aci-template \
+          --query "properties.outputs.containerFQDN.value" \
+          --output tsv)
+        python azure-deployment/test_deployment.py "http://$CONTAINER_FQDN:8000"
