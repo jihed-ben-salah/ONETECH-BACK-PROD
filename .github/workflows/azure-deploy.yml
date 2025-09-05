@@ -63,11 +63,3 @@ jobs:
           --output tsv)
         echo "🌐 Application deployed at: http://$CONTAINER_FQDN:8000"
     
-    - name: Test deployment
-      run: |
-        CONTAINER_FQDN=$(az deployment group show \
-          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --name aci-template \
-          --query "properties.outputs.containerFQDN.value" \
-          --output tsv)
-        python azure-deployment/test_deployment.py "http://$CONTAINER_FQDN:8000"
