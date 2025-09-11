@@ -8,10 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps (add libgl if opencv needs it)
+# System deps (add libgl if opencv needs it, poppler-utils for pdf2image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libglib2.0-0 libsm6 libxext6 libxrender1 \
+    poppler-utils \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

@@ -1,7 +1,7 @@
 import io
 import os
 import tempfile
-from typing import Any, Dict
+from typing import Any, Dict, List
 import google.generativeai as genai
 
 from rest_framework.views import APIView
@@ -18,6 +18,13 @@ except Exception:
 
 from .serializers import ExtractionRequestSerializer
 from .utils import post_process_payload
+from .pdf_utils import (
+    is_pdf_file, 
+    split_pdf_to_images, 
+    convert_single_page_pdf_to_image, 
+    save_image_to_temp_file,
+    get_pdf_page_count
+)
 
 MODEL_NAME = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
 
@@ -60,80 +67,205 @@ class ExtractView(APIView):
         up_file = serializer.validated_data['file']
         print(f"[DEBUG] File info: name='{up_file.name}', size={up_file.size}, content_type='{up_file.content_type}'")
 
-        # Save to temp file for existing extraction function
+        # Read file content
         try:
+            file_content = up_file.read()
+            up_file.seek(0)  # Reset file pointer
+        except Exception as e:
+            return Response({
+                'status': 'error', 
+                'message': f'Failed to read uploaded file: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Check if it's a PDF file
+        is_pdf = is_pdf_file(file_content)
+        print(f"[DEBUG] Is PDF file: {is_pdf}")
+
+        # Configure API key
+        api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        print(f"[DEBUG] API key status: {'found' if api_key else 'missing'}")
+        if not api_key:
+            print("[ERROR] Google API key not configured")
+            return Response({
+                'status': 'error', 
+                'message': 'Google API key not configured'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        try:
+            genai.configure(api_key=api_key)
+            print("[DEBUG] Google AI configured successfully")
+        except Exception as config_error:
+            print(f"[ERROR] Failed to configure Google AI: {config_error}")
+            return Response({
+                'status': 'error', 
+                'message': f'Failed to configure Google AI: {str(config_error)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if is_pdf:
+            return self._handle_pdf_extraction(file_content, document_type, up_file.name)
+        else:
+            return self._handle_image_extraction(file_content, document_type, up_file.name)
+
+    def _handle_image_extraction(self, file_content: bytes, document_type: str, filename: str):
+        """Handle extraction from a single image file."""
+        tmp_path = None
+        try:
+            # Save to temp file for existing extraction function
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                for chunk in up_file.chunks():
-                    tmp.write(chunk)
+                tmp.write(file_content)
                 tmp_path = tmp.name
             
             # Verify the file was written correctly
-            if not os.path.exists(tmp_path):
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
                 return Response({
                     'status': 'error', 
                     'message': 'Failed to create temporary file'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
-            if os.path.getsize(tmp_path) == 0:
-                return Response({
-                    'status': 'error', 
-                    'message': 'Temporary file is empty'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
-        except Exception as file_error:
-            return Response({
-                'status': 'error', 
-                'message': f'Failed to process uploaded file: {str(file_error)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        try:
-            # Configure API key each call (idempotent) if available
-            api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
-            print(f"[DEBUG] API key status: {'found' if api_key else 'missing'}")
-            if not api_key:
-                print("[ERROR] Google API key not configured")
-                return Response({
-                    'status': 'error', 
-                    'message': 'Google API key not configured'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            try:
-                genai.configure(api_key=api_key)
-                print("[DEBUG] Google AI configured successfully")
-            except Exception as config_error:
-                print(f"[ERROR] Failed to configure Google AI: {config_error}")
-                return Response({
-                    'status': 'error', 
-                    'message': f'Failed to configure Google AI: {str(config_error)}'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            # Call underlying extraction
+            # Call extraction
             print(f"[DEBUG] Starting extraction for {document_type} with file {tmp_path}")
             wrapper: Dict[str, Any] = extract_data_from_image(tmp_path, doc_type=document_type)
             print(f"[DEBUG] Extraction completed. Result: {wrapper}")
             
             if not wrapper:
-                return Response({'status': 'error', 'message': 'Empty extraction result (model returned nothing or parsing failed).'}, status=status.HTTP_502_BAD_GATEWAY)
+                return Response({'status': 'error', 'message': 'Empty extraction result'}, status=status.HTTP_502_BAD_GATEWAY)
 
-            # Unwrap if nested {"data": {...}, "remark": "..."}
-            inner = wrapper.get('data') if isinstance(wrapper, dict) else None
+            # Process result
+            inner = wrapper.get('data') if isinstance(wrapper, dict) else wrapper
             remark = wrapper.get('remark') if isinstance(wrapper, dict) else None
-            if inner is None:
-                inner = wrapper  # fall back to raw
-
+            
             processed = post_process_payload(inner)
             resp_payload = {'status': 'success', 'data': processed}
             if remark:
                 resp_payload['remark'] = remark
+            
             print(f"[DEBUG] Returning response: {resp_payload}")
             return Response(resp_payload)
+            
         except Exception as e:
             print(f"[ERROR] Exception in extraction: {type(e).__name__}: {str(e)}")
-            import traceback
-            print(f"[ERROR] Traceback: {traceback.format_exc()}")
             return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    def _handle_pdf_extraction(self, file_content: bytes, document_type: str, filename: str):
+        """Handle extraction from PDF file (single or multi-page)."""
+        try:
+            # Get page count first
+            page_count = get_pdf_page_count(file_content)
+            print(f"[DEBUG] PDF has {page_count} pages")
+            
+            if page_count == 1:
+                # Single page PDF - convert to image and process normally
+                print("[DEBUG] Processing single-page PDF")
+                image_bytes = convert_single_page_pdf_to_image(file_content)
+                return self._handle_image_extraction(image_bytes, document_type, filename)
+            else:
+                # Multi-page PDF - split and process each page
+                print(f"[DEBUG] Processing multi-page PDF with {page_count} pages")
+                return self._handle_multipage_pdf_extraction(file_content, document_type, filename, page_count)
+                
+        except Exception as e:
+            print(f"[ERROR] Exception in PDF processing: {type(e).__name__}: {str(e)}")
+            return Response({
+                'status': 'error', 
+                'message': f'Failed to process PDF: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _handle_multipage_pdf_extraction(self, file_content: bytes, document_type: str, filename: str, page_count: int):
+        """Handle extraction from multi-page PDF."""
+        try:
+            # Split PDF into individual page images
+            pages = split_pdf_to_images(file_content)
+            
+            results = []
+            errors = []
+            
+            for page_num, image_bytes in pages:
+                print(f"[DEBUG] Processing page {page_num}/{page_count}")
+                
+                tmp_path = None
+                try:
+                    # Save page image to temp file
+                    tmp_path = save_image_to_temp_file(image_bytes, suffix='.jpg')
+                    
+                    # Extract data from this page
+                    wrapper: Dict[str, Any] = extract_data_from_image(tmp_path, doc_type=document_type)
+                    
+                    if wrapper:
+                        # Process result
+                        inner = wrapper.get('data') if isinstance(wrapper, dict) else wrapper
+                        remark = wrapper.get('remark') if isinstance(wrapper, dict) else None
+                        
+                        processed = post_process_payload(inner)
+                        
+                        # Create page-specific document
+                        page_result = {
+                            'page_number': page_num,
+                            'data': processed,
+                            'remark': remark or f'{document_type} extraction complete - Page {page_num}',
+                            'metadata': {
+                                'filename': f"{filename}_page_{page_num}",
+                                'document_type': document_type,
+                                'original_filename': filename,
+                                'page_number': page_num,
+                                'total_pages': page_count,
+                                'is_multi_page': True
+                            }
+                        }
+                        
+                        results.append(page_result)
+                        print(f"[DEBUG] Successfully processed page {page_num}")
+                    else:
+                        error = {
+                            'page_number': page_num,
+                            'error': 'Empty extraction result',
+                            'filename': f"{filename}_page_{page_num}"
+                        }
+                        errors.append(error)
+                        print(f"[ERROR] Failed to process page {page_num}: Empty result")
+                        
+                except Exception as e:
+                    error = {
+                        'page_number': page_num,
+                        'error': str(e),
+                        'filename': f"{filename}_page_{page_num}"
+                    }
+                    errors.append(error)
+                    print(f"[ERROR] Failed to process page {page_num}: {str(e)}")
+                finally:
+                    if tmp_path:
+                        try:
+                            os.remove(tmp_path)
+                        except OSError:
+                            pass
+
+            # Return comprehensive results
+            response = {
+                'status': 'success',
+                'totalPages': page_count,
+                'processedSuccessfully': len(results),
+                'errors': len(errors),
+                'results': results,
+                'failedPages': errors,
+                'originalFileName': filename,
+                'message': f'Processed {len(results)} out of {page_count} pages successfully'
+            }
+            
+            if len(results) == 0:
+                response['status'] = 'error'
+                response['message'] = 'Failed to process any pages'
+                return Response(response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            return Response(response)
+            
+        except Exception as e:
+            print(f"[ERROR] Exception in multi-page PDF processing: {type(e).__name__}: {str(e)}")
+            return Response({
+                'status': 'error', 
+                'message': f'Failed to process multi-page PDF: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
