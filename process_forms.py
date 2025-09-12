@@ -223,7 +223,11 @@ def normalize_rebut_numeric_fields(data: dict) -> dict:
 
 # ---------------- Kosu verification and recovery (like Rebut) -----------------
 def verify_kosu_header(img: PIL.Image.Image, data: dict, model) -> dict:
-  """Verify header fields are correctly extracted from handwriting."""
+  """Verify header fields with safe error handling."""
+  if not isinstance(data, dict):
+    print("[verify_kosu_header] Data is not a dict")
+    return data
+    
   header_fields = ['Equipe', 'Nom Ligne', 'Code ligne', 'Jour', 'Semaine', 'Numéro OF', 'Ref PF']
   header_summary = {k: data.get(k) for k in header_fields}
   
@@ -254,28 +258,30 @@ def verify_kosu_header(img: PIL.Image.Image, data: dict, model) -> dict:
     "- DO NOT assume similar fields have similar values"
   )
   
-  try:
-    resp = model.generate_content([prompt, img])
-    txt = resp.text or '{}'
-    if JSON_FENCE in txt:
-      txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
-    corrections = json.loads(txt).get('header_corrections', [])
+  text = safe_model_call(model, [prompt, img], "verify_kosu_header")
+  if not text:
+    return data
     
-    for correction in corrections:
-      if not isinstance(correction, dict):
-        continue
-      field = correction.get('field')
-      correct_value = correction.get('correct_value')
-      if field in data and correct_value is not None:
-        data[field] = correct_value
-        print(f"[Kosu] Corrected {field}: '{correction.get('extracted_value')}' -> '{correct_value}'")
-  except Exception as e:
-    print(f"[Kosu] header verify fail: {e}")
+  result = safe_json_parse(text, {}, "verify_kosu_header")
+  corrections = result.get('header_corrections', []) if isinstance(result, dict) else []
+  
+  for correction in corrections:
+    if not isinstance(correction, dict):
+      continue
+    field = correction.get('field')
+    correct_value = correction.get('correct_value')
+    if field in data and correct_value is not None:
+      print(f"[Kosu] Corrected {field}: '{correction.get('extracted_value')}' -> '{correct_value}'")
+      data[field] = correct_value
   
   return data
 
 def recover_kosu_missing_header(img: PIL.Image.Image, data: dict, model) -> dict:
-  """Find missing handwritten header fields."""
+  """Find missing header fields with safe error handling."""
+  if not isinstance(data, dict):
+    print("[recover_kosu_missing_header] Data is not a dict")
+    return data
+    
   header_fields = ['Equipe', 'Nom Ligne', 'Code ligne', 'Jour', 'Semaine', 'Numéro OF', 'Ref PF']
   current_values = {k: data.get(k) for k in header_fields}
   empty_fields = [k for k, v in current_values.items() if v in (None, '', 'null')]
@@ -290,27 +296,30 @@ def recover_kosu_missing_header(img: PIL.Image.Image, data: dict, model) -> dict
     "RULES: Extract EXACTLY what is handwritten. No guessing or interpretation."
   )
   
-  try:
-    resp = model.generate_content([prompt, img])
-    txt = resp.text or '{}'
-    if JSON_FENCE in txt:
-      txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
-    recovered = json.loads(txt).get('recovered_fields', [])
+  text = safe_model_call(model, [prompt, img], "recover_kosu_missing_header")
+  if not text:
+    return data
     
-    for recovery in recovered:
-      if not isinstance(recovery, dict):
-        continue
-      field = recovery.get('field')
-      value = recovery.get('value')
-      if field in empty_fields and value not in (None, '', 'null'):
-        data[field] = value
-  except Exception as e:
-    print(f"[Kosu] header recovery fail: {e}")
+  result = safe_json_parse(text, {}, "recover_kosu_missing_header")
+  recovered = result.get('recovered_fields', []) if isinstance(result, dict) else []
+  
+  for recovery in recovered:
+    if not isinstance(recovery, dict):
+      continue
+    field = recovery.get('field')
+    value = recovery.get('value')
+    if field in empty_fields and value not in (None, '', 'null'):
+      print(f"[Kosu] Recovered {field}: '{value}'")
+      data[field] = value
   
   return data
 
 def verify_kosu_table_data(img: PIL.Image.Image, data: dict, model) -> dict:
-  """Verify table data extraction accuracy."""
+  """Verify table data with safe error handling."""
+  if not isinstance(data, dict):
+    print("[verify_kosu_table_data] Data is not a dict")
+    return data
+    
   suivi = data.get('Suivi horaire', [])
   if not suivi:
     return data
@@ -333,27 +342,24 @@ def verify_kosu_table_data(img: PIL.Image.Image, data: dict, model) -> dict:
     "RULES: Only extract what is clearly handwritten. No calculations or interpretations."
   )
   
-  try:
-    resp = model.generate_content([prompt, img])
-    txt = resp.text or '{}'
-    if JSON_FENCE in txt:
-      txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
-    corrections = json.loads(txt).get('table_corrections', [])
+  text = safe_model_call(model, [prompt, img], "verify_kosu_table_data")
+  if not text:
+    return data
     
-    for correction in corrections:
-      if not isinstance(correction, dict):
-        continue
-      row_idx = correction.get('row_index')
-      field = correction.get('field')
-      correct_value = correction.get('correct_value')
-      
-      if (isinstance(row_idx, int) and 0 <= row_idx < len(suivi) and 
-          field in suivi[row_idx] and correct_value is not None):
-        suivi[row_idx][field] = correct_value
-        
-  except Exception as e:
-    print(f"[Kosu] table verify fail: {e}")
+  result = safe_json_parse(text, {}, "verify_kosu_table_data")
+  corrections = result.get('table_corrections', []) if isinstance(result, dict) else []
   
+  for correction in corrections:
+    if not isinstance(correction, dict):
+      continue
+    row_idx = correction.get('row_index')
+    field = correction.get('field')
+    correct_value = correction.get('correct_value')
+    
+    if (isinstance(row_idx, int) and 0 <= row_idx < len(suivi) and 
+        field in suivi[row_idx] and correct_value is not None):
+      suivi[row_idx][field] = correct_value
+      
   return data
 
 # ---------------- Kosu post-processing (French schema) -----------------
@@ -408,6 +414,57 @@ def post_process_kosu(data: dict) -> dict:
           pass  # Keep original value
   
   return data
+
+# ---------------- Safe Model Call Wrappers -----------------
+def safe_model_call(model, inputs, operation_name="extraction"):
+  """Safe wrapper for model calls with comprehensive error handling."""
+  try:
+    if not inputs:
+      print(f"[{operation_name}] No inputs provided")
+      return None
+      
+    resp = model.generate_content(inputs)
+    if not resp:
+      print(f"[{operation_name}] Model returned None response")
+      return None
+      
+    if not hasattr(resp, 'text') or resp.text is None:
+      print(f"[{operation_name}] Model response has no text")
+      return None
+      
+    return resp.text
+  except Exception as e:
+    print(f"[{operation_name}] Model call failed: {e}")
+    return None
+
+def safe_json_parse(text, default=None, operation_name="parsing"):
+  """Safe JSON parsing with fallback."""
+  if not text:
+    print(f"[{operation_name}] Empty text provided")
+    return default or {}
+    
+  try:
+    # Extract JSON from markdown if present
+    if JSON_FENCE in text:
+      match = re.search(JSON_FENCE_BLOCK_PATTERN, text)
+      if match:
+        text = match.group(1)
+      else:
+        print(f"[{operation_name}] JSON fence found but no content extracted")
+        return default or {}
+    
+    result = json.loads(text)
+    if result is None:
+      print(f"[{operation_name}] JSON parsed to None")
+      return default or {}
+      
+    return result
+  except json.JSONDecodeError as e:
+    print(f"[{operation_name}] JSON decode error: {e}")
+    return default or {}
+  except Exception as e:
+    print(f"[{operation_name}] Unexpected parsing error: {e}")
+    return default or {}
 
 # ---------------- Enhanced Image Processing -----------------
 def preprocess_for_ocr(img: PIL.Image.Image) -> PIL.Image.Image:
@@ -737,7 +794,11 @@ def extract_defauts_multi(image_path: str, model) -> Dict[str, Any]:
 
 # ---------------- Orchestrator -----------------
 def extract_with_confidence_retry(model, prompt: str, images: List[PIL.Image.Image], max_retries: int = 2) -> dict:
-  """Extract with confidence checking and retry logic."""
+  """Extract with confidence checking and safe error handling."""
+  if not isinstance(images, list) or not images:
+    print("[extract_with_confidence_retry] No valid images provided")
+    return {}
+    
   best_result = {}
   best_confidence = 0
   
@@ -746,14 +807,19 @@ def extract_with_confidence_retry(model, prompt: str, images: List[PIL.Image.Ima
       # Add confidence instruction to prompt
       enhanced_prompt = prompt + "\n\nALSO: Add a 'extraction_confidence' field (0-100) indicating how confident you are about the extracted values."
       
-      resp = model.generate_content([enhanced_prompt] + images)
-      txt = resp.text or '{}'
+      # Use safe model call
+      result_text = safe_model_call(model, [enhanced_prompt] + images, f"confidence_extraction_attempt_{attempt}")
+      if not result_text:
+        continue
       
-      if JSON_FENCE in txt:
-        txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
+      # Use safe JSON parse
+      data = safe_json_parse(result_text, {}, f"confidence_extraction_attempt_{attempt}")
+      if not isinstance(data, dict):
+        continue
       
-      data = json.loads(txt)
       confidence = data.get('extraction_confidence', 50)
+      if not isinstance(confidence, (int, float)):
+        confidence = 50
       
       # Calculate confidence based on data completeness
       non_null_fields = sum(1 for v in data.values() if v not in (None, '', 'null', []))
@@ -765,7 +831,7 @@ def extract_with_confidence_retry(model, prompt: str, images: List[PIL.Image.Ima
       
       if combined_confidence > best_confidence:
         best_confidence = combined_confidence
-        best_result = data
+        best_result = data.copy()
         best_result['final_confidence'] = combined_confidence
       
       # If confidence is high enough, stop retrying
@@ -815,88 +881,90 @@ def validate_extraction_against_template(data: dict, doc_type: str) -> dict:
             warnings.append(f"  -> Auto-corrected to '{clean_val}'")
   
 def cross_validate_fields(data: dict, doc_type: str) -> dict:
-  """Perform cross-field validation to catch logical inconsistencies."""
+  """Cross-validate fields with comprehensive None handling."""
+  if not isinstance(data, dict):
+    print(f"[cross_validate_fields] Expected dict, got {type(data)}")
+    return data
+    
   corrections = []
   
-  if doc_type == 'Kosu':
-    # Enforce strict type rules for Nom Ligne and Code ligne
-    nom_ligne = data.get('Nom Ligne')
-    code_ligne = data.get('Code ligne')
-    
-    # Code ligne MUST be numeric
-    if code_ligne and isinstance(code_ligne, str):
-      # Try to extract numbers from Code ligne
-      numeric_part = re.sub(r'[^\d]', '', code_ligne.strip())
-      if not numeric_part:
+  try:
+    if doc_type == 'Kosu':
+      # Enforce strict type rules for Nom Ligne and Code ligne
+      nom_ligne = data.get('Nom Ligne')
+      code_ligne = data.get('Code ligne')
+      
+      # Code ligne MUST be numeric
+      if code_ligne and isinstance(code_ligne, str):
+        # Try to extract numbers from Code ligne
+        numeric_part = re.sub(r'[^\d]', '', code_ligne.strip())
+        if not numeric_part:
+          corrections.append(f"INVALID: Code ligne '{code_ligne}' must be numeric - clearing value")
+          data['Code ligne'] = None
+        elif numeric_part != code_ligne.strip():
+          corrections.append(f"CLEANED: Code ligne '{code_ligne}' -> '{numeric_part}' (extracted numbers)")
+          data['Code ligne'] = numeric_part
+      elif code_ligne and not isinstance(code_ligne, (int, float)):
         corrections.append(f"INVALID: Code ligne '{code_ligne}' must be numeric - clearing value")
         data['Code ligne'] = None
-      elif numeric_part != code_ligne.strip():
-        corrections.append(f"CLEANED: Code ligne '{code_ligne}' -> '{numeric_part}' (extracted numbers)")
-        data['Code ligne'] = numeric_part
-    elif code_ligne and not isinstance(code_ligne, (int, float)):
-      corrections.append(f"INVALID: Code ligne '{code_ligne}' must be numeric - clearing value")
-      data['Code ligne'] = None
-    
-    # Nom Ligne MUST be text/string (not purely numeric)
-    if nom_ligne and isinstance(nom_ligne, str):
-      if nom_ligne.strip().isdigit():
-        corrections.append(f"INVALID: Nom Ligne '{nom_ligne}' should be descriptive text, not a number")
-        # Check if this number should be in Code ligne instead
+      
+      # Nom Ligne MUST be text/string (not purely numeric)
+      if nom_ligne and isinstance(nom_ligne, str):
+        if nom_ligne.strip().isdigit():
+          corrections.append(f"INVALID: Nom Ligne '{nom_ligne}' should be descriptive text, not a number")
+          # Check if this number should be in Code ligne instead
+          if not data.get('Code ligne'):
+            corrections.append(f"MOVED: '{nom_ligne}' moved from Nom Ligne to Code ligne")
+            data['Code ligne'] = nom_ligne.strip()
+          data['Nom Ligne'] = None
+      elif nom_ligne and isinstance(nom_ligne, (int, float)):
+        corrections.append(f"INVALID: Nom Ligne '{nom_ligne}' should be text, not numeric")
         if not data.get('Code ligne'):
           corrections.append(f"MOVED: '{nom_ligne}' moved from Nom Ligne to Code ligne")
-          data['Code ligne'] = nom_ligne.strip()
+          data['Code ligne'] = str(nom_ligne)
         data['Nom Ligne'] = None
-    elif nom_ligne and isinstance(nom_ligne, (int, float)):
-      corrections.append(f"INVALID: Nom Ligne '{nom_ligne}' should be text, not numeric")
-      if not data.get('Code ligne'):
-        corrections.append(f"MOVED: '{nom_ligne}' moved from Nom Ligne to Code ligne")
-        data['Code ligne'] = str(nom_ligne)
-      data['Nom Ligne'] = None
+      
+      # Check for duplicate values (after type corrections)
+      nom_ligne = data.get('Nom Ligne')
+      code_ligne = data.get('Code ligne')
+      if (nom_ligne and code_ligne and 
+          isinstance(nom_ligne, str) and isinstance(code_ligne, str) and
+          nom_ligne.strip().lower() == code_ligne.strip().lower()):
+        corrections.append(f"DUPLICATE: Same value '{nom_ligne}' in both Nom Ligne and Code ligne - clearing Nom Ligne")
+        data['Nom Ligne'] = None
+      
+      # Check for duplicate values across other header fields
+      other_header_fields = ['Equipe', 'Jour', 'Semaine', 'Numéro OF', 'Ref PF']
+      field_values = {}
+      
+      for field in other_header_fields:
+        value = data.get(field)
+        if value and isinstance(value, str) and value.strip():
+          clean_value = value.strip().lower()
+          if clean_value in field_values:
+            corrections.append(f"DUPLICATE VALUE: '{value}' appears in both '{field_values[clean_value]}' and '{field}'")
+            data[field] = None
+          else:
+            field_values[clean_value] = field
+      
+      # Validate team identifiers
+      equipe = data.get('Equipe')
+      if equipe and isinstance(equipe, str):
+        if not re.match(r'^(I{1,3}|IV|V|VI{0,3}|IX|X|[1-9]|10)$', equipe.strip()):
+          corrections.append(f"INVALID TEAM ID: '{equipe}' - should be Roman numeral I-X or digit 1-10")
+          data['Equipe'] = None
+      
+      # Validate week numbers
+      semaine = data.get('Semaine')
+      if semaine and isinstance(semaine, str):
+        week_num = re.sub(r'[^\d]', '', semaine)
+        if week_num and (int(week_num) < 1 or int(week_num) > 53):
+          corrections.append(f"INVALID WEEK: '{semaine}' - should be 1-53")
+          data['Semaine'] = None
     
-    # Check for duplicate values (after type corrections)
-    nom_ligne = data.get('Nom Ligne')
-    code_ligne = data.get('Code ligne')
-    if (nom_ligne and code_ligne and 
-        isinstance(nom_ligne, str) and isinstance(code_ligne, str) and
-        nom_ligne.strip().lower() == code_ligne.strip().lower()):
-      corrections.append(f"DUPLICATE: Same value '{nom_ligne}' in both Nom Ligne and Code ligne - clearing Nom Ligne")
-      data['Nom Ligne'] = None
-    
-    # Check for duplicate values across other header fields
-    other_header_fields = ['Equipe', 'Jour', 'Semaine', 'Numéro OF', 'Ref PF']
-    field_values = {}
-    
-    for field in other_header_fields:
-      value = data.get(field)
-      if value and isinstance(value, str) and value.strip():
-        clean_value = value.strip().lower()
-        if clean_value in field_values:
-          corrections.append(f"DUPLICATE VALUE: '{value}' appears in both '{field_values[clean_value]}' and '{field}'")
-          data[field] = None
-        else:
-          field_values[clean_value] = field
-    
-    # Validate team identifiers
-    equipe = data.get('Equipe')
-    if equipe and isinstance(equipe, str):
-      # Should be Roman numeral or digit 1-10
-      if not re.match(r'^(I{1,3}|IV|V|VI{0,3}|IX|X|[1-9]|10)$', equipe.strip()):
-        corrections.append(f"INVALID TEAM ID: '{equipe}' - should be Roman numeral I-X or digit 1-10")
-        data['Equipe'] = None
-    
-    # Validate week numbers
-    semaine = data.get('Semaine')
-    if semaine and isinstance(semaine, str):
-      week_num = re.sub(r'[^\d]', '', semaine)
-      if week_num and (int(week_num) < 1 or int(week_num) > 53):
-        corrections.append(f"INVALID WEEK: '{semaine}' - should be 1-53")
-        data['Semaine'] = None
-    
-    # Remove the old field swapping logic since we now enforce types strictly
-  
-  elif doc_type == 'NPT':
-    # UAP should be digits only
-    uap = data.get('uap')
+    elif doc_type == 'NPT':
+      # UAP should be digits only
+      uap = data.get('uap')
     if uap and isinstance(uap, str):
       if not re.match(r'^\d{1,3}$', uap.strip()):
         clean_uap = re.sub(r'[^\d]', '', uap)
@@ -906,206 +974,280 @@ def cross_validate_fields(data: dict, doc_type: str) -> dict:
         else:
           corrections.append(f"INVALID UAP: '{uap}' - should be digits only")
           data['uap'] = None
-  
-  elif doc_type == 'Rebut':
-    # JAP should be numeric
-    jap = data.get('jap')
-    if jap and isinstance(jap, str):
-      if not re.match(r'^\d{1,4}$', jap.strip()):
-        clean_jap = re.sub(r'[^\d]', '', jap)
-        if clean_jap:
-          corrections.append(f"CLEANED JAP: '{jap}' -> '{clean_jap}'")
-          data['jap'] = clean_jap
-        else:
-          corrections.append(f"INVALID JAP: '{jap}' - should be digits only")
-          data['jap'] = None
-  
-  if corrections:
-    data['cross_validation_corrections'] = corrections
-    print(f"[{doc_type}] Cross-validation corrections: {len(corrections)}")
-  
+    
+    elif doc_type == 'Rebut':
+      # JAP should be numeric
+      jap = data.get('jap')
+      if jap and isinstance(jap, str):
+        if not re.match(r'^\d{1,4}$', jap.strip()):
+          clean_jap = re.sub(r'[^\d]', '', jap)
+          if clean_jap:
+            corrections.append(f"CLEANED JAP: '{jap}' -> '{clean_jap}'")
+            data['jap'] = clean_jap
+          else:
+            corrections.append(f"INVALID JAP: '{jap}' - should be digits only")
+            data['jap'] = None
+    
+    if corrections:
+      data['cross_validation_corrections'] = corrections
+      print(f"[{doc_type}] Cross-validation corrections: {len(corrections)}")
+    
+    return data
+    
+  except Exception as e:
+    print(f"[cross_validate_fields] Error: {e}")
+    return data
+
 def targeted_field_reextraction(img: PIL.Image.Image, data: dict, problem_fields: List[str], model, doc_type: str) -> dict:
-  """Re-extract specific problematic fields with focused prompts."""
+  """Re-extract specific problematic fields with safe error handling."""
+  if not isinstance(data, dict):
+    print(f"[targeted_field_reextraction] Expected dict, got {type(data)}")
+    return data
+    
   if not problem_fields:
     return data
   
-  field_specific_prompts = {
-    'Equipe': "Look ONLY at the 'Equipe' field. Extract the exact handwritten value (digit or Roman numeral). Return JSON: {\"Equipe\": \"value_or_null\"}",
-    'Nom Ligne': "Look ONLY at the 'Nom Ligne' field (line name). Extract the exact handwritten TEXT/DESCRIPTION. This MUST be descriptive text/words, NOT numbers. Return JSON: {\"Nom Ligne\": \"text_description_or_null\"}",
-    'Code ligne': "Look ONLY at the 'Code ligne' field (line code). Extract ONLY the NUMBERS written there. This MUST be numeric only (like 1, 2, 15, 25). Ignore any text. Return JSON: {\"Code ligne\": \"numbers_only_or_null\"}",
-    'uap': "Look ONLY at the 'UAP' field. Extract only the digits (1-3 digits). Ignore any 'UAP' prefix. Return JSON: {\"uap\": \"digits_only_or_null\"}",
-    'jap': "Look ONLY at the 'JAP' field. Extract only the digits. Return JSON: {\"jap\": \"digits_only_or_null\"}"
-  }
-  
-  for field in problem_fields:
-    if field in field_specific_prompts:
-      try:
-        prompt = field_specific_prompts[field]
-        resp = model.generate_content([prompt, img])
-        txt = resp.text or '{}'
+  try:
+    field_specific_prompts = {
+      'Equipe': "Look ONLY at the 'Equipe' field. Extract the exact handwritten value (digit or Roman numeral). Return JSON: {\"Equipe\": \"value_or_null\"}",
+      'Nom Ligne': "Look ONLY at the 'Nom Ligne' field (line name). Extract the exact handwritten TEXT/DESCRIPTION. This MUST be descriptive text/words, NOT numbers. Return JSON: {\"Nom Ligne\": \"text_description_or_null\"}",
+      'Code ligne': "Look ONLY at the 'Code ligne' field (line code). Extract ONLY the NUMBERS written there. This MUST be numeric only (like 1, 2, 15, 25). Ignore any text. Return JSON: {\"Code ligne\": \"numbers_only_or_null\"}",
+      'uap': "Look ONLY at the 'UAP' field. Extract only the digits (1-3 digits). Ignore any 'UAP' prefix. Return JSON: {\"uap\": \"digits_only_or_null\"}",
+      'jap': "Look ONLY at the 'JAP' field. Extract only the digits. Return JSON: {\"jap\": \"digits_only_or_null\"}"
+    }
+    
+    for field in problem_fields:
+      if field in field_specific_prompts:
+        try:
+          prompt = field_specific_prompts[field]
+          
+          # Use safe model call
+          field_result = safe_model_call(model, [prompt, img], f"field_reextraction_{field}")
+          if not field_result:
+            continue
+            
+          # Use safe JSON parse
+          field_data = safe_json_parse(field_result, {}, f"field_reextraction_{field}")
+          if not isinstance(field_data, dict):
+            continue
+            
+          if field in field_data and field_data[field] not in (None, '', 'null'):
+            old_value = data.get(field)
+            new_value = field_data[field]
+            if old_value != new_value:
+              data[field] = new_value
+              print(f"[{doc_type}] Re-extracted {field}: '{old_value}' -> '{new_value}'")
         
-        if JSON_FENCE in txt:
-          txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
-        
-        field_data = json.loads(txt)
-        if field in field_data and field_data[field] not in (None, '', 'null'):
-          old_value = data.get(field)
-          new_value = field_data[field]
-          if old_value != new_value:
-            data[field] = new_value
-            print(f"[{doc_type}] Re-extracted {field}: '{old_value}' -> '{new_value}'")
-      
-      except Exception as e:
-        print(f"[{doc_type}] Re-extraction failed for {field}: {e}")
-  
-  return data
+        except Exception as e:
+          print(f"[{doc_type}] Re-extraction failed for {field}: {e}")
+    
+    return data
+    
+  except Exception as e:
+    print(f"[targeted_field_reextraction] Error: {e}")
+    return data
 
 def final_sanity_check(data: dict, doc_type: str) -> dict:
-  """Final validation before returning data to catch remaining issues."""
+  """Final validation with comprehensive None handling."""
+  if not isinstance(data, dict):
+    print(f"[final_sanity_check] Expected dict, got {type(data)}")
+    return data
+    
   issues = []
   
-  if doc_type == 'Kosu':
-    # Enforce strict type rules for critical fields
-    nom_ligne = data.get('Nom Ligne')
-    code_ligne = data.get('Code ligne')
+  try:
+    if doc_type == 'Kosu':
+      # Enforce strict type rules for critical fields
+      nom_ligne = data.get('Nom Ligne')
+      code_ligne = data.get('Code ligne')
+      
+      # Code ligne MUST be numeric
+      if code_ligne:
+        if isinstance(code_ligne, str) and not code_ligne.strip().isdigit():
+          issues.append(f"CRITICAL: Code ligne '{code_ligne}' must be numeric only")
+          data['Code ligne'] = None
+        elif not isinstance(code_ligne, (str, int, float)):
+          issues.append(f"CRITICAL: Code ligne '{code_ligne}' has invalid type")
+          data['Code ligne'] = None
+      
+      # Nom Ligne MUST be descriptive text (not numbers)
+      if nom_ligne:
+        if isinstance(nom_ligne, str) and nom_ligne.strip().isdigit():
+          issues.append(f"CRITICAL: Nom Ligne '{nom_ligne}' should be text, not numbers")
+          data['Nom Ligne'] = None
+        elif isinstance(nom_ligne, (int, float)):
+          issues.append(f"CRITICAL: Nom Ligne '{nom_ligne}' should be text, not numeric")
+          data['Nom Ligne'] = None
+      
+      # Check for exact duplicates in critical fields (after type enforcement)
+      nom_ligne = data.get('Nom Ligne')
+      code_ligne = data.get('Code ligne')
+      equipe = data.get('Equipe')
+      
+      critical_values = {}
+      for field, value in [('Nom Ligne', nom_ligne), ('Code ligne', code_ligne), ('Equipe', equipe)]:
+        if value and isinstance(value, str) and value.strip():
+          clean_val = value.strip().lower()
+          if clean_val in critical_values:
+            issues.append(f"CRITICAL: Duplicate value '{value}' in '{field}' and '{critical_values[clean_val]}'")
+            data[field] = None
+          else:
+            critical_values[clean_val] = field
+      
+      # Validate team identifier
+      equipe = data.get('Equipe')
+      if equipe and not re.match(r'^(I{1,3}|IV|V|VI{0,3}|IX|X|[1-9]|10)$', str(equipe).strip()):
+        issues.append(f"INVALID: Equipe '{equipe}' should be Roman numeral I-X or digit 1-10")
+        data['Equipe'] = None
     
-    # Code ligne MUST be numeric
-    if code_ligne:
-      if isinstance(code_ligne, str) and not code_ligne.strip().isdigit():
-        issues.append(f"CRITICAL: Code ligne '{code_ligne}' must be numeric only")
-        data['Code ligne'] = None
-      elif not isinstance(code_ligne, (str, int, float)):
-        issues.append(f"CRITICAL: Code ligne '{code_ligne}' has invalid type")
-        data['Code ligne'] = None
+    elif doc_type == 'NPT':
+      # UAP must be digits only
+      uap = data.get('uap')
+      if uap and not re.match(r'^\d{1,3}$', str(uap).strip()):
+        issues.append(f"INVALID: UAP '{uap}' must be 1-3 digits only")
+        data['uap'] = None
     
-    # Nom Ligne MUST be descriptive text (not numbers)
-    if nom_ligne:
-      if isinstance(nom_ligne, str) and nom_ligne.strip().isdigit():
-        issues.append(f"CRITICAL: Nom Ligne '{nom_ligne}' should be text, not numbers")
-        data['Nom Ligne'] = None
-      elif isinstance(nom_ligne, (int, float)):
-        issues.append(f"CRITICAL: Nom Ligne '{nom_ligne}' should be text, not numeric")
-        data['Nom Ligne'] = None
+    elif doc_type == 'Rebut':
+      # JAP must be digits only  
+      jap = data.get('jap')
+      if jap and not re.match(r'^\d{1,4}$', str(jap).strip()):
+        issues.append(f"INVALID: JAP '{jap}' must be digits only")
+        data['jap'] = None
     
-    # Check for exact duplicates in critical fields (after type enforcement)
-    nom_ligne = data.get('Nom Ligne')
-    code_ligne = data.get('Code ligne')
-    equipe = data.get('Equipe')
+    if issues:
+      data['final_sanity_issues'] = issues
+      print(f"[{doc_type}] Final sanity check found {len(issues)} issues")
     
-    critical_values = {}
-    for field, value in [('Nom Ligne', nom_ligne), ('Code ligne', code_ligne), ('Equipe', equipe)]:
-      if value and isinstance(value, str) and value.strip():
-        clean_val = value.strip().lower()
-        if clean_val in critical_values:
-          issues.append(f"CRITICAL: Duplicate value '{value}' in '{field}' and '{critical_values[clean_val]}'")
-          data[field] = None
-        else:
-          critical_values[clean_val] = field
+    return data
     
-    # Validate team identifier
-    equipe = data.get('Equipe')
-    if equipe and not re.match(r'^(I{1,3}|IV|V|VI{0,3}|IX|X|[1-9]|10)$', str(equipe).strip()):
-      issues.append(f"INVALID: Equipe '{equipe}' should be Roman numeral I-X or digit 1-10")
-      data['Equipe'] = None
-  
-  elif doc_type == 'NPT':
-    # UAP must be digits only
-    uap = data.get('uap')
-    if uap and not re.match(r'^\d{1,3}$', str(uap).strip()):
-      issues.append(f"INVALID: UAP '{uap}' must be 1-3 digits only")
-      data['uap'] = None
-  
-  elif doc_type == 'Rebut':
-    # JAP must be digits only  
-    jap = data.get('jap')
-    if jap and not re.match(r'^\d{1,4}$', str(jap).strip()):
-      issues.append(f"INVALID: JAP '{jap}' must be digits only")
-      data['jap'] = None
-  
-  if issues:
-    data['final_sanity_issues'] = issues
-    print(f"[{doc_type}] Final sanity check found {len(issues)} issues")
-  
-  return data
+  except Exception as e:
+    print(f"[final_sanity_check] Error: {e}")
+    return data
 
 PROMPT_MAP = {'Rebut': REBUT_MULTI_PROMPT, 'Kosu': KOSU_PROMPT, 'NPT': NPT_PROMPT, DEFAUTS_DOC_TYPE: DEFAUTS_PRIMARY_PROMPT, 'Defauts': DEFAUTS_PRIMARY_PROMPT}
 
 def extract_data_from_image(image_path: str, doc_type: str) -> Dict[str, Any]:
-  model = genai.GenerativeModel(GEMINI_PRO_MODEL)
-  if doc_type in ['Défauts','Defauts']:
-    return extract_defauts_multi(image_path, model)
+  """Main extraction orchestrator with comprehensive error handling."""
   try:
-    base = PIL.Image.open(image_path)
-  except FileNotFoundError:
-    print("Image not found")
-    return {}
-  prompt = PROMPT_MAP.get(doc_type)
-  if not prompt:
-    print("Unsupported doc_type")
-    return {}
-  crops: List[PIL.Image.Image] = []
-  if doc_type == 'Rebut':
-    crops = gather_rebut_images_with_preprocessing(image_path)
-  elif doc_type == 'Kosu':
-    crops = gather_kosu_images_with_preprocessing(image_path)
-  # Use confidence-based extraction
-  images_to_use = [base] + crops if (doc_type in ['Rebut','Kosu'] and crops) else [base]
-  data = extract_with_confidence_retry(model, prompt, images_to_use)
-  
-  if not data:
-    print(f"Primary extraction fail for {doc_type}")
-    return {}
+    if not image_path or not doc_type:
+      print("[extract_data_from_image] Missing required parameters")
+      return {"error": "Missing image_path or doc_type"}
     
-  data.setdefault('document_type', doc_type)
-  if doc_type == 'Rebut':
-    data = verify_rebut_totals(base, data, model)
-    data = recover_rebut_missing_rows(base, data, model)
-    data = verify_rebut_totals(base, data, model)
-    data = deduplicate_rebut_items(data)
-    data = verify_rebut_totals(base, data, model)
-    data = normalize_rebut_numeric_fields(data)
-  elif doc_type == 'Kosu':
-    # Apply Rebut-like multi-pass verification for Kosu
-    data = verify_kosu_header(base, data, model)
-    data = recover_kosu_missing_header(base, data, model)
-    data = verify_kosu_table_data(base, data, model)
-    data = post_process_kosu(data)  # Minimal post-processing
-  
-  # Apply template validation for all document types
-  data = validate_extraction_against_template(data, doc_type)
-  
-  # Apply cross-field validation
-  data = cross_validate_fields(data, doc_type)
-  
-  # Identify and re-extract problematic fields
-  problem_fields = []
-  if 'validation_warnings' in data:
-    for warning in data['validation_warnings']:
-      if 'Field' in warning and 'doesn\'t match' in warning:
-        field_name = warning.split("'")[1]
-        problem_fields.append(field_name)
-  
-  if 'cross_validation_corrections' in data:
-    for correction in data['cross_validation_corrections']:
-      if 'DUPLICATE VALUE' in correction or 'INVALID' in correction or 'SWAPPED' in correction:
-        # Extract field names from correction messages
-        if 'Equipe' in correction:
-          problem_fields.append('Equipe')
-        if 'Nom Ligne' in correction:
-          problem_fields.append('Nom Ligne')
-        if 'Code ligne' in correction:
-          problem_fields.append('Code ligne')
-  
-  # Re-extract problematic fields with focused prompts
-  if problem_fields:
-    problem_fields = list(set(problem_fields))  # Remove duplicates
-    print(f"[{doc_type}] Re-extracting problematic fields: {problem_fields}")
-    data = targeted_field_reextraction(base, data, problem_fields, model, doc_type)
-  
-  # Final sanity check
-  data = final_sanity_check(data, doc_type)
-  
-  return {"data": data, "remark": f"{doc_type} extraction complete"}
+    model = genai.GenerativeModel(GEMINI_PRO_MODEL)
+    
+    if doc_type in ['Défauts','Defauts']:
+      return extract_defauts_multi(image_path, model)
+    
+    # Safe image loading
+    try:
+      base = PIL.Image.open(image_path)
+    except FileNotFoundError:
+      print(f"[extract_data_from_image] Image not found: {image_path}")
+      return {"error": "Image not found"}
+    except Exception as e:
+      print(f"[extract_data_from_image] Image loading error: {e}")
+      return {"error": f"Image loading failed: {e}"}
+    
+    # Get prompt safely
+    prompt = PROMPT_MAP.get(doc_type)
+    if not prompt:
+      print(f"[extract_data_from_image] Unsupported doc_type: {doc_type}")
+      return {"error": f"Unsupported document type: {doc_type}"}
+    
+    # Gather images with error handling
+    crops: List[PIL.Image.Image] = []
+    try:
+      if doc_type == 'Rebut':
+        crops = gather_rebut_images_with_preprocessing(image_path)
+      elif doc_type == 'Kosu':
+        crops = gather_kosu_images_with_preprocessing(image_path)
+    except Exception as e:
+      print(f"[extract_data_from_image] Image preprocessing error: {e}")
+      # Continue with base image only
+    
+    # Use confidence-based extraction with safe model calls
+    images_to_use = [base] + crops if (doc_type in ['Rebut','Kosu'] and crops) else [base]
+    
+    try:
+      data = extract_with_confidence_retry(model, prompt, images_to_use)
+    except Exception as e:
+      print(f"[extract_data_from_image] Primary extraction error: {e}")
+      data = None
+    
+    if not data or not isinstance(data, dict):
+      print(f"[extract_data_from_image] Primary extraction failed for {doc_type}")
+      return {"error": "Primary extraction failed", "document_type": doc_type}
+      
+    data.setdefault('document_type', doc_type)
+    
+    # Apply document-specific verification with error handling
+    try:
+      if doc_type == 'Rebut':
+        data = verify_rebut_totals(base, data, model)
+        data = recover_rebut_missing_rows(base, data, model)
+        data = verify_rebut_totals(base, data, model)
+        data = deduplicate_rebut_items(data)
+        data = verify_rebut_totals(base, data, model)
+        data = normalize_rebut_numeric_fields(data)
+      elif doc_type == 'Kosu':
+        # Apply multi-pass verification for Kosu
+        data = verify_kosu_header(base, data, model)
+        data = recover_kosu_missing_header(base, data, model)
+        data = verify_kosu_table_data(base, data, model)
+        data = post_process_kosu(data)
+    except Exception as e:
+      print(f"[extract_data_from_image] Document-specific verification error: {e}")
+      # Continue with basic data
+    
+    # Apply validation pipeline with error handling
+    try:
+      # Template validation
+      data = validate_extraction_against_template(data, doc_type)
+      
+      # Cross-field validation
+      data = cross_validate_fields(data, doc_type)
+      
+      # Identify problematic fields for re-extraction
+      problem_fields = []
+      if isinstance(data, dict):
+        if 'validation_warnings' in data:
+          for warning in data['validation_warnings']:
+            if 'Field' in warning and 'doesn\'t match' in warning:
+              try:
+                field_name = warning.split("'")[1]
+                problem_fields.append(field_name)
+              except IndexError:
+                continue
+        
+        if 'cross_validation_corrections' in data:
+          for correction in data['cross_validation_corrections']:
+            if 'DUPLICATE VALUE' in correction or 'INVALID' in correction or 'SWAPPED' in correction:
+              # Extract field names from correction messages
+              if 'Equipe' in correction:
+                problem_fields.append('Equipe')
+              if 'Nom Ligne' in correction:
+                problem_fields.append('Nom Ligne')
+              if 'Code ligne' in correction:
+                problem_fields.append('Code ligne')
+        
+        # Re-extract problematic fields with focused prompts
+        if problem_fields:
+          problem_fields = list(set(problem_fields))  # Remove duplicates
+          print(f"[{doc_type}] Re-extracting problematic fields: {problem_fields}")
+          data = targeted_field_reextraction(base, data, problem_fields, model, doc_type)
+        
+        # Final sanity check
+        data = final_sanity_check(data, doc_type)
+      
+    except Exception as e:
+      print(f"[extract_data_from_image] Validation pipeline error: {e}")
+      # Continue with extracted data
+    
+    return {"data": data, "remark": f"{doc_type} extraction complete"}
+    
+  except Exception as e:
+    print(f"[extract_data_from_image] Critical error: {e}")
+    return {"error": f"Critical extraction error: {e}", "document_type": doc_type}
 
 # ---------------- Excel export -----------------
 def save_data_to_excel(data: Dict[str, Any], output_filename: str):
