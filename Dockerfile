@@ -8,10 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps (add libgl if opencv needs it)
+# System deps (add libgl if opencv needs it, poppler-utils for pdf2image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libglib2.0-0 libsm6 libxext6 libxrender1 \
+    poppler-utils \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -33,4 +35,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8000/health/ || exit 1
 
 # Default command
-CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "180"]
+CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "600"]

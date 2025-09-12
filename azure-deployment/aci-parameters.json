@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "containerGroupName": {
+      "value": "onetech-backend"
+    },
+    "containerImageName": {
+      "value": "YOUR_REGISTRY.azurecr.io/onetech-backend:latest"
+    },
+    "registryServer": {
+      "value": "YOUR_REGISTRY.azurecr.io"
+    },
+    "registryUsername": {
+      "value": "YOUR_REGISTRY_USERNAME"
+    },
+    "registryPassword": {
+      "value": "YOUR_REGISTRY_PASSWORD"
+    },
+    "djangoSecretKey": {
+      "value": "YOUR_DJANGO_SECRET_KEY"
+    },
+    "googleApiKey": {
+      "value": "YOUR_GOOGLE_API_KEY"
+    },
+    "debug": {
+      "value": "false"
+    }
+  }
+}
