@@ -1,9 +1,16 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+# Load environment variables from .env if python-dotenv is available
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:
+    load_dotenv = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env')
+if load_dotenv:
+    # Only attempt to load .env when the package is present
+    load_dotenv(BASE_DIR / '.env')
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-secret-key')
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 ALLOWED_HOSTS = ['*']
