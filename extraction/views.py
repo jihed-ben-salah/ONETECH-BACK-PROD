@@ -1,6 +1,7 @@
 import io
 import os
 import tempfile
+import base64
 from typing import Any, Dict, List
 import google.generativeai as genai
 
@@ -23,7 +24,8 @@ from .pdf_utils import (
     split_pdf_to_images, 
     convert_single_page_pdf_to_image, 
     save_image_to_temp_file,
-    get_pdf_page_count
+    get_pdf_page_count,
+    cleanup_temp_file
 )
 
 MODEL_NAME = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
@@ -268,4 +270,89 @@ class ExtractView(APIView):
             return Response({
                 'status': 'error', 
                 'message': f'Failed to process multi-page PDF: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class SplitPDFView(APIView):
+    """Split PDF into pages and return images with base64 encoding for visualization."""
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request, *args, **kwargs):
+        print(f"[DEBUG] PDF Split request received with data keys: {list(request.data.keys())}")
+        
+        # Get the uploaded file
+        if 'file' not in request.FILES:
+            return Response({
+                'error': 'No file uploaded'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        uploaded_file = request.FILES['file']
+        print(f"[DEBUG] File info: name='{uploaded_file.name}', size={uploaded_file.size}, content_type='{uploaded_file.content_type}'")
+
+        try:
+            # Read file content
+            file_content = uploaded_file.read()
+            uploaded_file.seek(0)  # Reset file pointer
+            
+            # Check if it's a PDF file
+            if not is_pdf_file(file_content):
+                return Response({
+                    'error': 'File is not a PDF'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get page count
+            page_count = get_pdf_page_count(file_content)
+            print(f"[DEBUG] PDF has {page_count} pages")
+            
+            if page_count == 1:
+                # Single page PDF - convert to image
+                image_bytes = convert_single_page_pdf_to_image(file_content)
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                
+                page_data = [{
+                    'pageNumber': 1,
+                    'fileName': f"{uploaded_file.name.rsplit('.', 1)[0]}-page-1.jpg",
+                    'mimeType': 'image/jpeg',
+                    'imageDataUrl': f"data:image/jpeg;base64,{base64_image}",
+                    'bufferSize': len(image_bytes),
+                    'status': 'pending',
+                    'extractedData': None,
+                    'error': None
+                }]
+            else:
+                # Multi-page PDF - split into images
+                pages = split_pdf_to_images(file_content)
+                page_data = []
+                
+                for page_num, image_bytes in pages:
+                    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                    page_info = {
+                        'pageNumber': page_num,
+                        'fileName': f"{uploaded_file.name.rsplit('.', 1)[0]}-page-{page_num}.jpg",
+                        'mimeType': 'image/jpeg',
+                        'imageDataUrl': f"data:image/jpeg;base64,{base64_image}",
+                        'bufferSize': len(image_bytes),
+                        'status': 'pending',
+                        'extractedData': None,
+                        'error': None
+                    }
+                    page_data.append(page_info)
+                    print(f"[DEBUG] Processed page {page_num}, image size: {len(image_bytes)} bytes")
+            
+            response = {
+                'success': True,
+                'originalFileName': uploaded_file.name,
+                'totalPages': page_count,
+                'pages': page_data
+            }
+            
+            print(f"[DEBUG] Returning {len(page_data)} pages for visualization")
+            return Response(response)
+            
+        except Exception as e:
+            print(f"[ERROR] Exception in PDF splitting: {type(e).__name__}: {str(e)}")
+            return Response({
+                'error': f'Failed to process PDF: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
