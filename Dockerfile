@@ -4,7 +4,8 @@ FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    POETRY_VIRTUALENVS_CREATE=false
+    POETRY_VIRTUALENVS_CREATE=false \
+    DJANGO_SETTINGS_MODULE=core.settings
 
 WORKDIR /app
 
@@ -25,13 +26,15 @@ COPY manage.py ./
 COPY process_forms.py ./process_forms.py
 COPY vercel_handler.py ./vercel_handler.py
 
-# Collect static (if needed) - safe even if no static
-RUN python manage.py collectstatic --noinput || true
+# Collect static files and create necessary directories
+RUN mkdir -p /app/staticfiles && \
+    python manage.py collectstatic --noinput --clear || true && \
+    chmod -R 755 /app/staticfiles
 
 EXPOSE 8000
 
-# Healthcheck (simple)
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8000/health/ || exit 1
+# Healthcheck using python instead of curl
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')" || exit 1
 
-# Default command
-CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "600"]
+# Default command with proper error handling
+CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "600", "--worker-class", "sync", "--max-requests", "1000", "--max-requests-jitter", "100"]
