@@ -275,7 +275,8 @@ class ExtractView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class SplitPDFView(APIView):
-    """Split PDF into pages and return images with base64 encoding for visualization."""
+    """Split PDF into pages and return images with base64 encoding for visualization.
+    Updated: 2025-09-13 - Using PyMuPDF for cloud-ready PDF processing."""
     authentication_classes: list = []
     permission_classes: list = []
 
