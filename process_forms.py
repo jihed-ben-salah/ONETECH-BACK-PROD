@@ -1190,11 +1190,22 @@ def extract_data_from_image(image_path: str, doc_type: str) -> Dict[str, Any]:
         data = verify_rebut_totals(base, data, model)
         data = normalize_rebut_numeric_fields(data)
       elif doc_type == 'Kosu':
-        # Apply multi-pass verification for Kosu
-        data = verify_kosu_header(base, data, model)
-        data = recover_kosu_missing_header(base, data, model)
-        data = verify_kosu_table_data(base, data, model)
-        data = post_process_kosu(data)
+        # Apply multi-pass verification for Kosu with safety checks
+        verified_header = verify_kosu_header(base, data, model)
+        if verified_header is not None:
+          data = verified_header
+        
+        recovered_header = recover_kosu_missing_header(base, data, model)
+        if recovered_header is not None:
+          data = recovered_header
+        
+        verified_table = verify_kosu_table_data(base, data, model)
+        if verified_table is not None:
+          data = verified_table
+        
+        processed_data = post_process_kosu(data)
+        if processed_data is not None:
+          data = processed_data
     except Exception as e:
       print(f"[extract_data_from_image] Document-specific verification error: {e}")
       # Continue with basic data
@@ -1202,10 +1213,14 @@ def extract_data_from_image(image_path: str, doc_type: str) -> Dict[str, Any]:
     # Apply validation pipeline with error handling
     try:
       # Template validation
-      data = validate_extraction_against_template(data, doc_type)
+      validated_data = validate_extraction_against_template(data, doc_type)
+      if validated_data is not None:
+        data = validated_data
       
       # Cross-field validation
-      data = cross_validate_fields(data, doc_type)
+      cross_validated_data = cross_validate_fields(data, doc_type)
+      if cross_validated_data is not None:
+        data = cross_validated_data
       
       # Identify problematic fields for re-extraction
       problem_fields = []
@@ -1234,14 +1249,23 @@ def extract_data_from_image(image_path: str, doc_type: str) -> Dict[str, Any]:
         if problem_fields:
           problem_fields = list(set(problem_fields))  # Remove duplicates
           print(f"[{doc_type}] Re-extracting problematic fields: {problem_fields}")
-          data = targeted_field_reextraction(base, data, problem_fields, model, doc_type)
+          reextracted_data = targeted_field_reextraction(base, data, problem_fields, model, doc_type)
+          if reextracted_data is not None:
+            data = reextracted_data
         
         # Final sanity check
-        data = final_sanity_check(data, doc_type)
+        final_checked_data = final_sanity_check(data, doc_type)
+        if final_checked_data is not None:
+          data = final_checked_data
       
     except Exception as e:
       print(f"[extract_data_from_image] Validation pipeline error: {e}")
       # Continue with extracted data
+    
+    # Final safety check - ensure data is not None
+    if data is None:
+      print(f"[extract_data_from_image] Data became None, returning minimal structure")
+      data = {"document_type": doc_type, "status": "extraction_failed"}
     
     return {"data": data, "remark": f"{doc_type} extraction complete"}
     
