@@ -8,8 +8,7 @@ from PIL import Image
 import logging
 
 try:
-    from pdf2image import convert_from_bytes
-    import PyPDF2
+    import fitz  # PyMuPDF
     PDF_LIBS_AVAILABLE = True
 except ImportError:
     PDF_LIBS_AVAILABLE = False
@@ -22,7 +21,7 @@ def is_pdf_file(file_content: bytes) -> bool:
 
 def split_pdf_to_images(file_content: bytes, dpi: int = 150, format: str = 'JPEG') -> List[Tuple[int, bytes]]:
     """
-    Split a PDF into individual page images.
+    Split a PDF into individual page images using PyMuPDF (cloud-ready, no system dependencies).
     
     Args:
         file_content: PDF file content as bytes
@@ -33,17 +32,32 @@ def split_pdf_to_images(file_content: bytes, dpi: int = 150, format: str = 'JPEG
         List of tuples (page_number, image_bytes)
     """
     if not PDF_LIBS_AVAILABLE:
-        raise ImportError("PDF processing libraries not available")
+        raise ImportError("PyMuPDF (fitz) library not available")
     
     pages = []
     
     try:
-        # Convert PDF to images using pdf2image
-        images = convert_from_bytes(file_content, dpi=dpi)
+        # Open PDF from bytes using PyMuPDF
+        pdf_document = fitz.open(stream=file_content, filetype="pdf")
         
-        logger.info(f"PDF has {len(images)} pages")
+        logger.info(f"PDF has {pdf_document.page_count} pages")
         
-        for page_num, img in enumerate(images):
+        for page_num in range(pdf_document.page_count):
+            # Get the page
+            page = pdf_document[page_num]
+            
+            # Create transformation matrix for DPI scaling
+            # PyMuPDF default is 72 DPI, so we scale accordingly
+            scale_factor = dpi / 72.0
+            mat = fitz.Matrix(scale_factor, scale_factor)
+            
+            # Render page to pixmap (image)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # Convert to PIL Image
+            img_data = pix.tobytes("ppm")
+            img = Image.open(io.BytesIO(img_data))
+            
             # Convert to target format
             output_buffer = io.BytesIO()
             
@@ -59,6 +73,9 @@ def split_pdf_to_images(file_content: bytes, dpi: int = 150, format: str = 'JPEG
             pages.append((page_num + 1, image_bytes))  # 1-indexed page numbers
             
             logger.info(f"Converted page {page_num + 1} to {format}, size: {len(image_bytes)} bytes")
+            
+        # Close the PDF document
+        pdf_document.close()
             
     except Exception as e:
         logger.error(f"Error splitting PDF to images: {str(e)}")
@@ -112,7 +129,7 @@ def save_image_to_temp_file(image_bytes: bytes, suffix: str = '.jpg') -> str:
 
 def get_pdf_page_count(file_content: bytes) -> int:
     """
-    Get the number of pages in a PDF.
+    Get the number of pages in a PDF using PyMuPDF (cloud-ready).
     
     Args:
         file_content: PDF file content as bytes
@@ -121,19 +138,36 @@ def get_pdf_page_count(file_content: bytes) -> int:
         Number of pages in the PDF
     """
     if not PDF_LIBS_AVAILABLE:
-        raise ImportError("PDF processing libraries not available")
+        raise ImportError("PyMuPDF (fitz) library not available")
     
     try:
-        # Use PyPDF2 to get page count (lighter than converting to images)
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-        page_count = len(pdf_reader.pages)
+        # Use PyMuPDF to get page count (very fast and lightweight)
+        pdf_document = fitz.open(stream=file_content, filetype="pdf")
+        page_count = pdf_document.page_count
+        pdf_document.close()
         return page_count
     except Exception as e:
         logger.error(f"Error getting PDF page count: {str(e)}")
-        # Fallback: convert to images and count
-        try:
-            images = convert_from_bytes(file_content, dpi=72)  # Low DPI for speed
-            return len(images)
-        except Exception as fallback_e:
-            logger.error(f"Fallback method also failed: {str(fallback_e)}")
-            raise Exception(f"Failed to get PDF page count: {str(e)}")
+        raise Exception(f"Failed to get PDF page count: {str(e)}")
+
+def cleanup_temp_file(file_path: str) -> bool:
+    """
+    Safely delete a temporary file.
+    
+    Args:
+        file_path: Path to the temporary file to delete
+    
+    Returns:
+        True if file was deleted successfully, False otherwise
+    """
+    try:
+        if os.path.exists(file_path):
+            os.unlink(file_path)
+            logger.info(f"Deleted temporary file: {file_path}")
+            return True
+        else:
+            logger.warning(f"Temporary file not found: {file_path}")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting temporary file {file_path}: {str(e)}")
+        return False
