@@ -19,6 +19,7 @@ except Exception:
 
 from .serializers import ExtractionRequestSerializer
 from .utils import post_process_payload
+from .image_storage import save_uploaded_image, save_image_from_bytes
 from .pdf_utils import (
     is_pdf_file, 
     split_pdf_to_images, 
@@ -112,6 +113,11 @@ class ExtractView(APIView):
         """Handle extraction from a single image file."""
         tmp_path = None
         try:
+            # Save the uploaded image to media directory
+            image_url = save_uploaded_image(file_content, filename)
+            if not image_url:
+                print("[WARNING] Failed to save uploaded image")
+            
             # Save to temp file for existing extraction function
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
                 tmp.write(file_content)
@@ -141,8 +147,16 @@ class ExtractView(APIView):
             if remark:
                 resp_payload['remark'] = remark
             
+            # Add image URL to response if successfully saved
+            if image_url:
+                resp_payload['imageUrl'] = image_url
+            
             print(f"[DEBUG] Returning response: {resp_payload}")
             return Response(resp_payload)
+            
+        except Exception as e:
+            print(f"[ERROR] Exception in extraction: {type(e).__name__}: {str(e)}")
+            return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
         except Exception as e:
             print(f"[ERROR] Exception in extraction: {type(e).__name__}: {str(e)}")
@@ -192,6 +206,11 @@ class ExtractView(APIView):
                 
                 tmp_path = None
                 try:
+                    # Save the page image to media directory
+                    page_image_url = save_image_from_bytes(image_bytes, f"{filename}_page_{page_num}")
+                    if not page_image_url:
+                        print(f"[WARNING] Failed to save image for page {page_num}")
+                    
                     # Save page image to temp file
                     tmp_path = save_image_to_temp_file(image_bytes, suffix='.jpg')
                     
@@ -219,6 +238,10 @@ class ExtractView(APIView):
                                 'is_multi_page': True
                             }
                         }
+                        
+                        # Add image URL if successfully saved
+                        if page_image_url:
+                            page_result['imageUrl'] = page_image_url
                         
                         results.append(page_result)
                         print(f"[DEBUG] Successfully processed page {page_num}")
