@@ -2,7 +2,10 @@ import io
 import os
 import tempfile
 import base64
+import mimetypes
 from typing import Any, Dict, List
+from django.http import HttpResponse, Http404
+from django.conf import settings
 import google.generativeai as genai
 
 from rest_framework.views import APIView
@@ -380,3 +383,39 @@ class SplitPDFView(APIView):
             return Response({
                 'error': f'Failed to process PDF: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MediaServeView(APIView):
+    """
+    Custom media file serving view for containerized environments.
+    This ensures media files are served even if static file serving is not working properly.
+    """
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request, path):
+        try:
+            # Construct the full path to the media file
+            file_path = os.path.join(settings.MEDIA_ROOT, path)
+            
+            # Check if file exists and is within MEDIA_ROOT (security check)
+            if not os.path.exists(file_path) or not os.path.abspath(file_path).startswith(os.path.abspath(settings.MEDIA_ROOT)):
+                raise Http404("Media file not found")
+            
+            # Determine content type
+            content_type, _ = mimetypes.guess_type(file_path)
+            if content_type is None:
+                content_type = 'application/octet-stream'
+            
+            # Read and serve the file
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            
+            response = HttpResponse(file_content, content_type=content_type)
+            response['Content-Length'] = len(file_content)
+            
+            return response
+            
+        except Exception as e:
+            print(f"[ERROR] Error serving media file {path}: {str(e)}")
+            raise Http404("Media file not found")

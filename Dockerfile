@@ -28,8 +28,10 @@ COPY vercel_handler.py ./vercel_handler.py
 
 # Collect static files and create necessary directories
 RUN mkdir -p /app/staticfiles && \
+    mkdir -p /app/media/images && \
     python manage.py collectstatic --noinput --clear || true && \
-    chmod -R 755 /app/staticfiles
+    chmod -R 755 /app/staticfiles && \
+    chmod -R 755 /app/media
 
 EXPOSE 8000
 
