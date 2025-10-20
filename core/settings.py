@@ -91,9 +91,10 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# File upload settings
-FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
-DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
+# File upload settings - Optimized for large PDFs
+FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB (increased from 50MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB (increased from 50MB)
+FILE_UPLOAD_TEMP_DIR = None  # Use system temp directory for large files
 FILE_UPLOAD_PERMISSIONS = 0o644
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
