@@ -84,22 +84,53 @@ class DocumentModel:
         """Update a specific field and track the change in history."""
         collection = cls.get_collection()
         
-        update_data = {
-            '$set': {
-                field: new_value,
-                'updated_at': datetime.utcnow(),
-                'updated_by_user': True
-            },
-            '$push': {
-                'history': {
-                    'field': field,
-                    'old_value': old_value,
-                    'new_value': new_value,
+        # Handle nested field paths (e.g., "data.header.ligne" -> {"data.header.ligne": new_value})
+        # Convert dot notation to nested dictionary structure
+        field_parts = field.split('.')
+        if len(field_parts) > 1:
+            # Create nested update structure
+            nested_update = {}
+            current = nested_update
+            for part in field_parts[:-1]:
+                current[part] = {}
+                current = current[part]
+            current[field_parts[-1]] = new_value
+            
+            # Use dot notation for MongoDB update
+            update_data = {
+                '$set': {
+                    field: new_value,
                     'updated_at': datetime.utcnow(),
-                    'updated_by': 'user'
+                    'updated_by_user': True
+                },
+                '$push': {
+                    'history': {
+                        'field': field,
+                        'old_value': old_value,
+                        'new_value': new_value,
+                        'updated_at': datetime.utcnow(),
+                        'updated_by': 'user'
+                    }
                 }
             }
-        }
+        else:
+            # Simple field update
+            update_data = {
+                '$set': {
+                    field: new_value,
+                    'updated_at': datetime.utcnow(),
+                    'updated_by_user': True
+                },
+                '$push': {
+                    'history': {
+                        'field': field,
+                        'old_value': old_value,
+                        'new_value': new_value,
+                        'updated_at': datetime.utcnow(),
+                        'updated_by': 'user'
+                    }
+                }
+            }
         
         result = collection.find_one_and_update(
             {'id': doc_id},
