@@ -3,6 +3,7 @@
 import os, json, re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 import pandas as pd
 import PIL.Image
 import google.generativeai as genai
@@ -19,6 +20,186 @@ JSON_FENCE = "```json"
 JSON_FENCE_BLOCK_PATTERN = r"```json\s*([\s\S]*?)\s*```"
 DEFAUTS_DOC_TYPE = 'Défauts'
 
+# ---------------- Date Normalization -----------------
+def normalize_date_value(date_value: Any, field_name: str = "date") -> Optional[str]:
+  """
+  Normalize date values to DD/MM/YYYY format.
+  Handles various input formats and validates dates.
+  
+  Args:
+    date_value: The date value to normalize (string, int, float, or None)
+    field_name: Name of the field for logging purposes
+    
+  Returns:
+    Normalized date string in DD/MM/YYYY format or None if invalid
+  """
+  if date_value is None or date_value == '' or date_value == 'null':
+    return None
+  
+  # Convert to string if needed
+  date_str = str(date_value).strip()
+  if not date_str:
+    return None
+  
+  # Common date patterns to try
+  date_patterns = [
+    # DD/MM/YYYY variants
+    (r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$', 'dmy'),  # 22/07/2025, 22-07-2025
+    (r'^(\d{1,2})[.](\d{1,2})[.](\d{4})$', 'dmy'),     # 22.07.2025
+    (r'^(\d{1,2})\s+(\d{1,2})\s+(\d{4})$', 'dmy'),     # 22 07 2025
+    
+    # YYYY/MM/DD variants
+    (r'^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$', 'ymd'),  # 2025/07/22, 2025-07-22
+    (r'^(\d{4})[.](\d{1,2})[.](\d{1,2})$', 'ymd'),     # 2025.07.22
+    
+    # DD/MM/YY variants (two-digit year)
+    (r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$', 'dmy2'),  # 22/07/25
+    (r'^(\d{1,2})[.](\d{1,2})[.](\d{2})$', 'dmy2'),     # 22.07.25
+    
+    # DDMMYYYY (no separators)
+    (r'^(\d{2})(\d{2})(\d{4})$', 'dmy'),               # 22072025
+    
+    # Special: French format with month name
+    (r'^(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(\d{4})$', 'french_month'),
+  ]
+  
+  # Month name mapping
+  french_months = {
+    'janvier': '01', 'février': '02', 'fevrier': '02', 'mars': '03',
+    'avril': '04', 'mai': '05', 'juin': '06', 'juillet': '07',
+    'août': '08', 'aout': '08', 'septembre': '09', 'octobre': '10',
+    'novembre': '11', 'décembre': '12', 'decembre': '12'
+  }
+  
+  # Try each pattern
+  for pattern, format_type in date_patterns:
+    match = re.match(pattern, date_str, re.IGNORECASE)
+    if match:
+      try:
+        if format_type == 'dmy':
+          day, month, year = match.groups()
+        elif format_type == 'ymd':
+          year, month, day = match.groups()
+        elif format_type == 'dmy2':
+          day, month, year = match.groups()
+          # Convert 2-digit year to 4-digit (assume 2000s)
+          year_int = int(year)
+          year = f"20{year}" if year_int < 50 else f"19{year}"
+        elif format_type == 'french_month':
+          day, month_name, year = match.groups()
+          month = french_months.get(month_name.lower(), '01')
+        
+        # Normalize to integers
+        day_int = int(day)
+        month_int = int(month)
+        year_int = int(year)
+        
+        # Validate date ranges
+        if not (1 <= day_int <= 31):
+          print(f"[DATE] Invalid day in {field_name}: {day_int}")
+          continue
+        if not (1 <= month_int <= 12):
+          print(f"[DATE] Invalid month in {field_name}: {month_int}")
+          continue
+        if not (1900 <= year_int <= 2100):
+          print(f"[DATE] Invalid year in {field_name}: {year_int}")
+          continue
+        
+        # Validate actual date (check for invalid dates like 31/02)
+        try:
+          datetime(year_int, month_int, day_int)
+        except ValueError as e:
+          print(f"[DATE] Invalid date in {field_name}: {day_int}/{month_int}/{year_int} - {e}")
+          continue
+        
+        # Return normalized format DD/MM/YYYY
+        normalized = f"{day_int:02d}/{month_int:02d}/{year_int:04d}"
+        print(f"[DATE] Normalized {field_name}: '{date_str}' -> '{normalized}'")
+        return normalized
+        
+      except (ValueError, AttributeError) as e:
+        print(f"[DATE] Failed to parse {field_name} with pattern {pattern}: {e}")
+        continue
+  
+  # If no pattern matched, check if it's a simple number (could be days since epoch)
+  if date_str.isdigit() and len(date_str) <= 5:
+    # Could be a day number like "22" - too ambiguous, return as-is with warning
+    print(f"[DATE] Ambiguous date format in {field_name}: '{date_str}' - keeping as-is")
+    return date_str
+  
+  # No valid pattern found
+  print(f"[DATE] Could not normalize {field_name}: '{date_str}' - invalid format")
+  return None
+
+def normalize_all_dates(data: dict, doc_type: str) -> dict:
+  """
+  Normalize all date fields in the extracted data based on document type.
+  
+  Args:
+    data: The extracted data dictionary
+    doc_type: Type of document (Rebut, Kosu, NPT, Défauts)
+    
+  Returns:
+    Data dictionary with normalized dates
+  """
+  if not isinstance(data, dict):
+    return data
+  
+  date_fields_map = {
+    'Rebut': [
+      ('header', 'date'),  # Rebut has date in header
+    ],
+    'Kosu': [
+      (None, 'Date du document'),  # Kosu has date at root level
+      (None, 'Jour'),  # Day field (L, M, M, J, V format - not a date)
+    ],
+    'NPT': [
+      ('header', 'date'),  # NPT has date in header
+    ],
+    'Défauts': [
+      ('entry_header', 'mois'),    # Month
+      ('entry_header', 'annee'),   # Year
+    ]
+  }
+  
+  # Get the relevant date fields for this document type
+  date_fields = date_fields_map.get(doc_type, [])
+  
+  for field_info in date_fields:
+    if len(field_info) == 2:
+      parent_key, field_key = field_info
+    else:
+      continue
+    
+    # Navigate to the field
+    if parent_key is None:
+      # Field is at root level
+      if field_key in data:
+        original_value = data[field_key]
+        # Skip normalization for "Jour" in Kosu (it's day of week, not date)
+        if doc_type == 'Kosu' and field_key == 'Jour':
+          continue
+        normalized_value = normalize_date_value(original_value, field_key)
+        if normalized_value is not None:
+          data[field_key] = normalized_value
+        elif original_value not in (None, '', 'null'):
+          # Keep original if normalization failed but value exists
+          print(f"[DATE] Keeping original {field_key}: '{original_value}'")
+    else:
+      # Field is nested (e.g., header.date)
+      if parent_key in data and isinstance(data[parent_key], dict):
+        parent_dict = data[parent_key]
+        if field_key in parent_dict:
+          original_value = parent_dict[field_key]
+          normalized_value = normalize_date_value(original_value, f"{parent_key}.{field_key}")
+          if normalized_value is not None:
+            parent_dict[field_key] = normalized_value
+          elif original_value not in (None, '', 'null'):
+            # Keep original if normalization failed but value exists
+            print(f"[DATE] Keeping original {parent_key}.{field_key}: '{original_value}'")
+  
+  return data
+
 # ---------------- Prompts -----------------
 REBUT_MULTI_PROMPT = (
   "ROLE: Expert transcription for French 'Formulaire de déclaration Rebuts'.\n"
@@ -31,8 +212,8 @@ REBUT_MULTI_PROMPT = (
 )
 
 KOSU_PROMPT = (
-  "ROLE: Expert form transcription specialist.\n"
-  "CRITICAL MISSION: Extract EXACTLY what is handwritten in EACH field location. NO interpretation, NO correction, NO assumptions.\n"
+  "ROLE: Expert form transcription specialist for French 'Suivi Productivité - Règles Escalade' forms.\n"
+  "CRITICAL MISSION: Extract EXACTLY what is handwritten in EACH field location by looking at FIELD LABELS on the form. NO interpretation, NO copying between fields.\n"
   "SCHEMA EXACT: {\n"
   "  \"document_type\": \"Kosu\",\n"
   "  \"Titre du document\": null,\n"
@@ -51,20 +232,23 @@ KOSU_PROMPT = (
   "  \"remark\": null\n"
   "}\n"
   "ABSOLUTE RULES (ZERO TOLERANCE FOR VIOLATIONS):\n"
-  "1. Look at EACH field's specific location on the form - DO NOT copy values between fields\n"
-  "2. 'Nom Ligne' = ALWAYS a descriptive TEXT/STRING (words, names, descriptions)\n"
-  "3. 'Code ligne' = ALWAYS a NUMERIC VALUE (numbers only: 1, 2, 10, 25, etc.)\n"
-  "4. If you see text in Code ligne field -> it's WRONG, extract the number only\n"
-  "5. If you see numbers in Nom Ligne field -> look again, should be text description\n"
-  "6. These fields are COMPLETELY DIFFERENT and MUST have different types of values\n"
-  "7. Copy EXACTLY what you see handwritten - no cleaning, no formatting, no interpretation\n"
-  "8. Empty/illegible = null. NEVER guess or invent values\n"
-  "9. VERIFICATION: Code ligne should be numeric, Nom Ligne should be text\n"
-  "EXAMPLES:\n"
-  "- Correct: \"Nom Ligne\": \"Ligne production A\", \"Code ligne\": \"15\"\n"
-  "- Correct: \"Nom Ligne\": \"Montage\", \"Code ligne\": \"3\"\n"
-  "- WRONG: \"Nom Ligne\": \"15\", \"Code ligne\": \"15\" (both numeric)\n"
-  "- WRONG: \"Nom Ligne\": \"Production\", \"Code ligne\": \"Production\" (same value)\n"
+  "1. LOOK AT FORM FIELD LABELS - Find 'Nom Ligne' label and extract value from THAT box, find 'Code ligne' label and extract from THAT box\n"
+  "2. 'Nom Ligne' field (usually has label 'Nom Ligne') = ALWAYS descriptive TEXT/NAME (like 'A41S', 'Production A', 'Montage', etc.) - CAN contain letters+numbers\n"
+  "3. 'Code ligne' field (usually has label 'Code ligne') = ALWAYS PURE NUMERIC (like '7', '15', '564', etc.) - ONLY digits, NO letters\n"
+  "4. THESE ARE TWO DIFFERENT PHYSICAL BOXES on the form - extract from the correct box for each field\n"
+  "5. If you see ONLY numbers in the 'Nom Ligne' box, that's an ERROR - check again, or mark as null\n"
+  "6. If you see letters in the 'Code ligne' box, extract ONLY the numbers, or mark as null if no numbers\n"
+  "7. Copy EXACTLY what you see handwritten in EACH specific field location\n"
+  "8. Empty/illegible = null. NEVER guess or copy from other fields\n"
+  "9. DOUBLE-CHECK: Nom Ligne and Code ligne MUST have DIFFERENT values, DIFFERENT types (text vs number)\n"
+  "CORRECT EXAMPLES:\n"
+  "- \"Nom Ligne\": \"A41S\", \"Code ligne\": \"7\" ✓ (text with letters+numbers vs pure number)\n"
+  "- \"Nom Ligne\": \"Ligne production A\", \"Code ligne\": \"15\" ✓ (descriptive text vs number)\n"
+  "- \"Nom Ligne\": \"Montage\", \"Code ligne\": \"3\" ✓ (word vs number)\n"
+  "WRONG EXAMPLES:\n"
+  "- \"Nom Ligne\": \"7\", \"Code ligne\": \"7\" ✗ (both same, both numeric - one field is wrong)\n"
+  "- \"Nom Ligne\": \"15\", \"Code ligne\": \"15\" ✗ (both same, Nom Ligne should be text)\n"
+  "- \"Nom Ligne\": \"Production\", \"Code ligne\": \"Production\" ✗ (both same value)\n"
   "Return ONLY the JSON object."
 )
 
@@ -76,13 +260,23 @@ NPT_PROMPT = (
 
 # ---------------- Rebut Post‑processing -----------------
 def verify_rebut_totals(img: PIL.Image.Image, data: dict, model) -> dict:
+  """Verify rebut totals - IMPROVED: Less aggressive clearing of values"""
   items = data.get('items') or []
   if not items:
     return data
-  summary = [{"reference": it.get('reference'), "extracted_total": it.get('total_scrapped')} for it in items]
+  
+  # Only verify items that have a total_scrapped value
+  items_with_totals = [it for it in items if it.get('total_scrapped') not in (None, '', 'null')]
+  if not items_with_totals:
+    print("[Rebut] No totals to verify")
+    return data
+  
+  summary = [{"reference": it.get('reference'), "extracted_total": it.get('total_scrapped')} for it in items_with_totals]
   prompt = (
-    f"Verify which TOTAL SCRAPPED cells contain handwritten digits. Rows: {json.dumps(summary, ensure_ascii=False)}\n"
-    "Return JSON only {\"handwritten_totals\":[{\"reference\":ref,\"has_total\":true|false}]}. If unsure false."
+    f"Verify which TOTAL SCRAPPED cells contain CLEAR handwritten digits. Rows: {json.dumps(summary, ensure_ascii=False)}\n"
+    "Return JSON only {\"handwritten_totals\":[{\"reference\":ref,\"has_total\":true|false,\"confidence\":\"high\"|\"medium\"|\"low\"}]}.\n"
+    "IMPORTANT: If a number is present and looks handwritten, mark as true. Only mark false if the cell is clearly empty or has only printed text.\n"
+    "Be LENIENT - we prefer to keep suspicious values rather than lose valid data."
   )
   try:
     resp = model.generate_content([prompt, img])
@@ -90,12 +284,21 @@ def verify_rebut_totals(img: PIL.Image.Image, data: dict, model) -> dict:
     if JSON_FENCE in txt:
       txt = re.search(JSON_FENCE_BLOCK_PATTERN, txt).group(1)
     verdict = json.loads(txt).get('handwritten_totals', [])
-    vmap = {v.get('reference'): v.get('has_total') for v in verdict if isinstance(v, dict)}
+    vmap = {v.get('reference'): (v.get('has_total'), v.get('confidence', 'medium')) for v in verdict if isinstance(v, dict)}
+    
+    # Only clear totals that are marked false with high confidence
     for it in items:
-      if vmap.get(it.get('reference')) is False:
-        it['total_scrapped'] = None
+      ref = it.get('reference')
+      if ref in vmap:
+        has_total, confidence = vmap[ref]
+        # Only clear if explicitly marked false AND confidence is not low
+        if has_total is False and confidence in ('high', 'medium'):
+          print(f"[Rebut] Clearing suspicious total for {ref}: {it.get('total_scrapped')} (confidence: {confidence})")
+          it['total_scrapped'] = None
+        else:
+          print(f"[Rebut] Keeping total for {ref}: {it.get('total_scrapped')} (has_total={has_total}, confidence={confidence})")
   except Exception as e:
-    print(f"[Rebut] totals verify fail: {e}")
+    print(f"[Rebut] totals verify fail (keeping existing values): {e}")
   return data
 
 def recover_rebut_missing_rows(img: PIL.Image.Image, data: dict, model) -> dict:
@@ -223,13 +426,35 @@ def normalize_rebut_numeric_fields(data: dict) -> dict:
 
 # ---------------- Kosu verification and recovery (like Rebut) -----------------
 def verify_kosu_header(img: PIL.Image.Image, data: dict, model) -> dict:
-  """Verify header fields with safe error handling."""
+  """Verify header fields with safe error handling - IMPROVED with better duplicate detection."""
   if not isinstance(data, dict):
     print("[verify_kosu_header] Data is not a dict")
     return data
     
   header_fields = ['Equipe', 'Nom Ligne', 'Code ligne', 'Jour', 'Semaine', 'Numéro OF', 'Ref PF']
   header_summary = {k: data.get(k) for k in header_fields}
+  
+  # PRE-VERIFICATION: Fix obvious type errors before asking the model
+  nom_ligne = data.get('Nom Ligne')
+  code_ligne = data.get('Code ligne')
+  
+  # If Nom Ligne is purely numeric and Code ligne is empty/same value
+  if nom_ligne and isinstance(nom_ligne, str) and nom_ligne.strip().isdigit():
+    if not code_ligne or code_ligne == nom_ligne:
+      print(f"[Kosu] PRE-FIX: Moving numeric '{nom_ligne}' from Nom Ligne to Code ligne")
+      data['Code ligne'] = nom_ligne.strip()
+      data['Nom Ligne'] = None
+      header_summary['Code ligne'] = nom_ligne.strip()
+      header_summary['Nom Ligne'] = None
+  
+  # If Code ligne contains letters and Nom Ligne is empty
+  if code_ligne and isinstance(code_ligne, str) and not code_ligne.strip().isdigit():
+    if not nom_ligne:
+      print(f"[Kosu] PRE-FIX: Moving text '{code_ligne}' from Code ligne to Nom Ligne")
+      data['Nom Ligne'] = code_ligne.strip()
+      data['Code ligne'] = None
+      header_summary['Nom Ligne'] = code_ligne.strip()
+      header_summary['Code ligne'] = None
   
   # Check for suspicious duplicate values
   duplicate_issues = []
@@ -241,21 +466,26 @@ def verify_kosu_header(img: PIL.Image.Image, data: dict, model) -> dict:
         if len(fields_with_same_value) > 1:
           duplicate_issues.append(f"SUSPICIOUS: '{v1}' appears in multiple fields: {fields_with_same_value}")
   
+  # Only call model verification if there are issues
+  if not duplicate_issues and nom_ligne and code_ligne:
+    print("[Kosu] Header looks good, skipping model verification")
+    return data
+  
   prompt = (
     f"Verify EACH header field separately in this Kosu form. Current extraction: {json.dumps(header_summary, ensure_ascii=False)}\n"
-    f"ATTENTION: Duplicate value issues detected: {duplicate_issues}\n"
+    f"ATTENTION: Issues detected: {duplicate_issues if duplicate_issues else 'Some fields are empty'}\n"
     "Look at the form and verify EACH field independently:\n"
-    "- 'Nom Ligne': Usually a descriptive name (text)\n"
-    "- 'Code ligne': Usually a short code/number (alphanumeric)\n"
-    "- 'Equipe': Team identifier (number or roman numeral)\n"
+    "- 'Nom Ligne': MUST be descriptive TEXT (like 'A41S', 'Ligne A', 'Production' etc) - NOT just numbers\n"
+    "- 'Code ligne': MUST be NUMERIC ONLY (like '7', '15', '25' etc) - NOT text\n"
+    "- 'Equipe': Team identifier (roman numeral or number)\n"
     "- Other fields: Check actual handwritten values\n\n"
-    "Return JSON only: {\"header_corrections\": [{\"field\": \"field_name\", \"extracted_value\": \"current\", \"correct_value\": \"actual_handwritten_or_null\"}]}\n"
+    "Return JSON only: {\"header_corrections\": [{\"field\": \"field_name\", \"extracted_value\": \"current\", \"correct_value\": \"actual_handwritten_or_null\", \"reason\": \"why_correcting\"}]}\n"
     "CRITICAL RULES:\n"
-    "- Look at EACH field location separately on the form\n"
-    "- If two fields have same value but different locations have different writing -> correct them\n"
+    "- Look at EACH field location separately on the form (check the form field labels)\n"
+    "- If two fields have same value, one of them is WRONG - find the correct value for each field location\n"
     "- Copy EXACTLY what is handwritten in each specific field location\n"
     "- If field is blank/illegible -> null\n"
-    "- DO NOT assume similar fields have similar values"
+    "- 'Nom Ligne' and 'Code ligne' are DIFFERENT fields and MUST have DIFFERENT values with DIFFERENT types"
   )
   
   text = safe_model_call(model, [prompt, img], "verify_kosu_header")
@@ -270,8 +500,9 @@ def verify_kosu_header(img: PIL.Image.Image, data: dict, model) -> dict:
       continue
     field = correction.get('field')
     correct_value = correction.get('correct_value')
-    if field in data and correct_value is not None:
-      print(f"[Kosu] Corrected {field}: '{correction.get('extracted_value')}' -> '{correct_value}'")
+    reason = correction.get('reason', 'No reason provided')
+    if field in data:
+      print(f"[Kosu] Corrected {field}: '{correction.get('extracted_value')}' -> '{correct_value}' (Reason: {reason})")
       data[field] = correct_value
   
   return data
@@ -1209,6 +1440,13 @@ def extract_data_from_image(image_path: str, doc_type: str) -> Dict[str, Any]:
     except Exception as e:
       print(f"[extract_data_from_image] Document-specific verification error: {e}")
       # Continue with basic data
+    
+    # Normalize dates BEFORE validation
+    try:
+      data = normalize_all_dates(data, doc_type)
+    except Exception as e:
+      print(f"[extract_data_from_image] Date normalization error: {e}")
+      # Continue without date normalization
     
     # Apply validation pipeline with error handling
     try:
