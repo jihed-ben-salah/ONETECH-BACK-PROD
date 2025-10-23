@@ -965,15 +965,15 @@ def cross_validate_fields(data: dict, doc_type: str) -> dict:
     elif doc_type == 'NPT':
       # UAP should be digits only
       uap = data.get('uap')
-    if uap and isinstance(uap, str):
-      if not re.match(r'^\d{1,3}$', uap.strip()):
-        clean_uap = re.sub(r'[^\d]', '', uap)
-        if clean_uap:
-          corrections.append(f"CLEANED UAP: '{uap}' -> '{clean_uap}'")
-          data['uap'] = clean_uap
-        else:
-          corrections.append(f"INVALID UAP: '{uap}' - should be digits only")
-          data['uap'] = None
+      if uap and isinstance(uap, str):
+        if not re.match(r'^\d{1,3}$', uap.strip()):
+          clean_uap = re.sub(r'[^\d]', '', uap)
+          if clean_uap:
+            corrections.append(f"CLEANED UAP: '{uap}' -> '{clean_uap}'")
+            data['uap'] = clean_uap
+          else:
+            corrections.append(f"INVALID UAP: '{uap}' - should be digits only")
+            data['uap'] = None
     
     elif doc_type == 'Rebut':
       # JAP should be numeric

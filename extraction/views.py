@@ -393,6 +393,14 @@ class MediaServeView(APIView):
     authentication_classes: list = []
     permission_classes: list = []
 
+    def options(self, request, path):
+        """Handle CORS preflight requests"""
+        response = HttpResponse()
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response['Access-Control-Allow-Headers'] = '*'
+        return response
+    
     def get(self, request, path):
         try:
             # Construct the full path to the media file
@@ -413,6 +421,16 @@ class MediaServeView(APIView):
             
             response = HttpResponse(file_content, content_type=content_type)
             response['Content-Length'] = len(file_content)
+            
+            # Add explicit CORS headers for media files
+            response['Access-Control-Allow-Origin'] = '*'
+            response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response['Access-Control-Allow-Headers'] = '*'
+            response['Access-Control-Allow-Credentials'] = 'true'
+            
+            # Debug logging
+            print(f"[DEBUG] Serving media file: {path}")
+            print(f"[DEBUG] CORS headers set: Access-Control-Allow-Origin=*, Methods=GET,HEAD,OPTIONS")
             
             return response
             

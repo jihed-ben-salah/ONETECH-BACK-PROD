@@ -84,7 +84,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
-    'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser','rest_framework.parsers.MultiPartParser']
+    'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser','rest_framework.parsers.MultiPartParser'],
+    'URL_FORMAT_OVERRIDE': 'response_format',
 }
 
 # CORS configuration
@@ -99,3 +100,7 @@ FILE_UPLOAD_PERMISSIONS = 0o644
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+
+# MongoDB configuration
+MONGODB_URI = os.getenv('MONGODB_URI')
+MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'onetech')
