@@ -297,10 +297,6 @@ def process_pdf_pages_background(session_id: str):
                         os.remove(tmp_path)
                     except OSError:
                         pass
-        except Exception as e:
-            print(f"[ERROR] Thread {thread_id}: Failed to process page {page_num}: {str(e)}")
-            session_storage.add_error(session_id, page_num, str(e))
-            return {'success': False, 'page': page_num, 'error': str(e)}
     
     # Execute pages in parallel
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -600,34 +596,6 @@ def list_batch_sessions(request):
         print(f"[ERROR] Failed to list sessions: {str(e)}")
         return JsonResponse({
             'error': f'Failed to list sessions: {str(e)}'
-        }, status=500)
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def get_active_sessions(request):
-    """
-    Get only active (processing/initializing) batch sessions.
-    Used by frontend to restore sessions after page refresh.
-    """
-    try:
-        all_sessions = session_storage.list_sessions()
-        
-        # Filter to only active sessions (not completed or failed)
-        active_sessions = [
-            session for session in all_sessions 
-            if session.get('status') in ['initializing', 'processing']
-        ]
-        
-        return JsonResponse({
-            'sessions': active_sessions,
-            'total': len(active_sessions)
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to get active sessions: {str(e)}")
-        return JsonResponse({
-            'error': f'Failed to get active sessions: {str(e)}'
         }, status=500)
 
 
