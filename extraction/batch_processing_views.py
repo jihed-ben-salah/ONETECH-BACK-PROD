@@ -36,8 +36,20 @@ try:
 except Exception:
     from ..process_forms import extract_data_from_image
 
-# In-memory session storage (use Redis/database in production)
+# MongoDB connection for session storage (production-ready)
+from .mongodb import get_mongodb_connection
+
+# In-memory session storage DEPRECATED - keeping for backward compatibility only
 BATCH_SESSIONS = {}
+
+def get_sessions_collection():
+    """Get MongoDB collection for batch sessions"""
+    try:
+        db = get_mongodb_connection()
+        return db['batch_sessions']
+    except Exception as e:
+        print(f"[ERROR] Failed to connect to MongoDB for sessions: {e}")
+        return None
 
 
 class BatchProcessingSession:
@@ -131,6 +143,9 @@ class BatchProcessingSession:
             self.status = 'completed' if self.completed_pages > 0 else 'failed'
             print(f"[DEBUG] Session {self.session_id} marked as {self.status}: {self.completed_pages}/{self.total_pages} completed")
         
+        # Save to MongoDB after each update
+        self.save_to_db()
+        
     def add_error(self, page_num: int, error: str):
         """Add failed page processing"""
         self.failed_pages += 1
@@ -154,6 +169,9 @@ class BatchProcessingSession:
         # Update overall status
         if (self.completed_pages + self.failed_pages) >= self.total_pages:
             self.status = 'completed' if self.completed_pages > 0 else 'failed'
+        
+        # Save to MongoDB after each update
+        self.save_to_db()
         
     def to_dict(self) -> Dict[str, Any]:
         """Convert session to dictionary for JSON response"""
@@ -183,6 +201,65 @@ class BatchProcessingSession:
             'updated_at': self.updated_at.isoformat(),
             'elapsed_seconds': (datetime.utcnow() - self.started_at).total_seconds(),
         }
+    
+    def save_to_db(self):
+        """Save session to MongoDB"""
+        try:
+            collection = get_sessions_collection()
+            if not collection:
+                print(f"[WARNING] MongoDB not available, session {self.session_id} only in memory")
+                return
+            
+            session_data = self.to_dict()
+            session_data['_id'] = self.session_id  # Use session_id as MongoDB _id
+            
+            # Upsert (update or insert)
+            collection.replace_one(
+                {'_id': self.session_id},
+                session_data,
+                upsert=True
+            )
+            print(f"[DEBUG] Session {self.session_id} saved to MongoDB")
+        except Exception as e:
+            print(f"[ERROR] Failed to save session to MongoDB: {e}")
+    
+    @classmethod
+    def load_from_db(cls, session_id: str):
+        """Load session from MongoDB"""
+        try:
+            collection = get_sessions_collection()
+            if not collection:
+                return None
+            
+            session_data = collection.find_one({'_id': session_id})
+            if not session_data:
+                return None
+            
+            # Reconstruct session object
+            session = cls(
+                session_id=session_data['session_id'],
+                total_pages=session_data['total_pages'],
+                document_type=session_data['document_type'],
+                filename=session_data['filename']
+            )
+            
+            # Restore state
+            session.status = session_data.get('status', 'processing')
+            session.completed_pages = session_data.get('completed_pages', 0)
+            session.failed_pages = session_data.get('failed_pages', 0)
+            session.processing_page = session_data.get('processing_page')
+            session.documents = session_data.get('documents', [])
+            session.errors = session_data.get('errors', [])
+            session.pages_info = session_data.get('pages_info', {})
+            session.started_at = datetime.fromisoformat(session_data['started_at'])
+            session.updated_at = datetime.fromisoformat(session_data['updated_at'])
+            
+            print(f"[DEBUG] Session {session_id} loaded from MongoDB")
+            return session
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to load session from MongoDB: {e}")
+            return None
 
 
 def process_pdf_pages_background(session_id: str):
@@ -437,6 +514,10 @@ def start_batch_processing(request):
         session.__dict__['pages_data'] = pages_with_urls
         BATCH_SESSIONS[session_id] = session
         
+        # Save session to MongoDB for multi-worker access
+        session.save_to_db()
+        print(f"[DEBUG] Session {session_id} saved to MongoDB and in-memory cache")
+        
         # Start background processing
         processing_thread = threading.Thread(
             target=process_pdf_pages_background,
@@ -472,10 +553,19 @@ def get_batch_status(request, session_id):
     Frontend polls this endpoint for progress updates.
     """
     try:
-        if session_id not in BATCH_SESSIONS:
-            return JsonResponse({'error': 'Session not found'}, status=404)
+        # First check in-memory cache (fastest)
+        session = BATCH_SESSIONS.get(session_id)
         
-        session = BATCH_SESSIONS[session_id]
+        # If not in memory, try loading from MongoDB (handles multiple workers)
+        if not session:
+            session = BatchProcessingSession.load_from_db(session_id)
+            if session:
+                # Cache in memory for faster subsequent access
+                BATCH_SESSIONS[session_id] = session
+                print(f"[DEBUG] Session {session_id} loaded from MongoDB and cached")
+            else:
+                return JsonResponse({'error': 'Session not found'}, status=404)
+        
         status_data = session.to_dict()
         
         # Add some helpful computed fields
