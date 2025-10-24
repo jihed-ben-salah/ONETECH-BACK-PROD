@@ -36,8 +36,8 @@ try:
 except Exception:
     from ..process_forms import extract_data_from_image
 
-# Import persistent session storage
-from .session_storage import session_storage
+# In-memory session storage (use Redis/database in production)
+BATCH_SESSIONS = {}
 
 
 class BatchProcessingSession:
@@ -187,36 +187,35 @@ class BatchProcessingSession:
 
 def process_pdf_pages_background(session_id: str):
     """Background thread function to process PDF pages in parallel"""
-    # Get session from persistent storage
-    session_data = session_storage.get_session(session_id)
-    if not session_data:
-        print(f"[ERROR] Session {session_id} not found in persistent storage")
+    session = BATCH_SESSIONS.get(session_id)
+    if not session:
+        print(f"[ERROR] Session {session_id} not found in background processing")
         return
     
     print(f"[DEBUG] Starting parallel background processing for session {session_id}")
-    session_storage.update_session(session_id, {'status': 'processing'})
+    session.update_status('processing')
     
     # Configure Google AI
     import google.generativeai as genai
     api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
     if not api_key:
-        session_storage.add_error(session_id, 0, "Google API key not configured")
-        session_storage.update_session(session_id, {'status': 'failed'})
+        session.add_error(0, "Google API key not configured")
+        session.update_status('failed')
         return
     
     try:
         genai.configure(api_key=api_key)
         print(f"[DEBUG] Google AI configured for session {session_id}")
     except Exception as e:
-        session_storage.add_error(session_id, 0, f"Failed to configure Google AI: {str(e)}")
-        session_storage.update_session(session_id, {'status': 'failed'})
+        session.add_error(0, f"Failed to configure Google AI: {str(e)}")
+        session.update_status('failed')
         return
     
     # Get page images from session metadata
-    pages_data = session_data.get('pages_data', [])
+    pages_data = session.__dict__.get('pages_data', [])
     if not pages_data:
-        session_storage.add_error(session_id, 0, "No page data available for processing")
-        session_storage.update_session(session_id, {'status': 'failed'})
+        session.add_error(0, "No page data available for processing")
+        session.update_status('failed')
         return
     
     # Process pages in parallel using ThreadPoolExecutor
@@ -233,8 +232,8 @@ def process_pdf_pages_background(session_id: str):
         thread_id = threading.current_thread().ident
         
         try:
-            print(f"[DEBUG] Thread {thread_id}: Processing page {page_num}/{session_data['total_pages']}")
-            session_storage.set_processing_page(session_id, page_num)
+            print(f"[DEBUG] Thread {thread_id}: Processing page {page_num}/{session.total_pages}")
+            session.set_processing_page(page_num)
             
             # Save image to temporary file for extraction
             import tempfile
@@ -246,8 +245,8 @@ def process_pdf_pages_background(session_id: str):
                     tmp_path = tmp.name
                 
                 # Perform AI extraction
-                print(f"[DEBUG] Thread {thread_id}: Starting extraction for page {page_num}, doc type: {session_data['document_type']}")
-                wrapper = extract_data_from_image(tmp_path, doc_type=session_data['document_type'])
+                print(f"[DEBUG] Thread {thread_id}: Starting extraction for page {page_num}, doc type: {session.document_type}")
+                wrapper = extract_data_from_image(tmp_path, doc_type=session.document_type)
                 
                 if not wrapper:
                     raise Exception("Empty extraction result from AI")
@@ -257,23 +256,23 @@ def process_pdf_pages_background(session_id: str):
                 remark = wrapper.get('remark') if isinstance(wrapper, dict) else None
                 
                 # Create document in database
-                Model = get_model_by_type(session_data['document_type'])
+                Model = get_model_by_type(session.document_type)
                 doc_id = str(uuid.uuid4())
                 
                 document_data = {
                     'id': doc_id,
                     'data': inner,
                     'metadata': {
-                        'filename': f'{session_data["filename"]}_page_{page_num}',
-                        'document_type': session_data['document_type'],
+                        'filename': f'{session.filename}_page_{page_num}',
+                        'document_type': session.document_type,
                         'processed_at': datetime.utcnow().isoformat(),
                         'page_number': page_num,
-                        'total_pages': session_data['total_pages'],
+                        'total_pages': session.total_pages,
                         'session_id': session_id,
-                        'is_multi_page': session_data['total_pages'] > 1,
-                        'original_filename': session_data['filename']
+                        'is_multi_page': session.total_pages > 1,
+                        'original_filename': session.filename
                     },
-                    'remark': remark or f'{session_data["document_type"]} extraction complete - Page {page_num}',
+                    'remark': remark or f'{session.document_type} extraction complete - Page {page_num}',
                     'imageUrl': image_url,
                     'json_url': f'/api/documents/{doc_id}/export?format=json',
                     'excel_url': f'/api/documents/{doc_id}/export?format=excel',
@@ -281,15 +280,11 @@ def process_pdf_pages_background(session_id: str):
                 }
                 
                 document = Model.create(document_data)
-                session_storage.add_success(session_id, page_num, doc_id, inner)
+                session.add_success(page_num, doc_id, inner, document_data)
                 
                 print(f"[DEBUG] Thread {thread_id}: Successfully processed page {page_num}")
                 return {'success': True, 'page': page_num, 'doc_id': doc_id}
                 
-            except Exception as e:
-                print(f"[ERROR] Thread {thread_id}: Failed to process page {page_num}: {str(e)}")
-                session_storage.add_error(session_id, page_num, str(e))
-                return {'success': False, 'page': page_num, 'error': str(e)}
             finally:
                 # Cleanup temp file
                 if tmp_path and os.path.exists(tmp_path):
@@ -297,9 +292,10 @@ def process_pdf_pages_background(session_id: str):
                         os.remove(tmp_path)
                     except OSError:
                         pass
+                        
         except Exception as e:
             print(f"[ERROR] Thread {thread_id}: Failed to process page {page_num}: {str(e)}")
-            session_storage.add_error(session_id, page_num, str(e))
+            session.add_error(page_num, str(e))
             return {'success': False, 'page': page_num, 'error': str(e)}
     
     # Execute pages in parallel
@@ -439,43 +435,7 @@ def start_batch_processing(request):
         
         # Store page data in session for background processing
         session.__dict__['pages_data'] = pages_with_urls
-        
-        # Create persistent session
-        session_data = {
-            'session_id': session_id,
-            'total_pages': len(pages_data),
-            'document_type': document_type,
-            'filename': original_filename,
-            'completed_pages': 0,
-            'failed_pages': 0,
-            'processing_page': None,
-            'documents': [],
-            'errors': [],
-            'started_at': session.started_at,
-            'updated_at': session.updated_at,
-            'status': 'initializing',
-            'pages_info': session.pages_info,
-            'pages_data': pages_with_urls
-        }
-        
-        try:
-            session_storage.create_session(
-                session_id=session_id,
-                total_pages=len(pages_data),
-                document_type=document_type,
-                filename=original_filename
-            )
-            # Update with page data
-            session_storage.update_session(session_id, {
-                'pages_info': session.pages_info,
-                'pages_data': pages_with_urls
-            })
-            print(f"[DEBUG] Created persistent session: {session_id}")
-        except Exception as e:
-            print(f"[ERROR] Failed to create persistent session: {e}")
-            return JsonResponse({
-                'error': f'Failed to create session: {str(e)}'
-            }, status=500)
+        BATCH_SESSIONS[session_id] = session
         
         # Start background processing
         processing_thread = threading.Thread(
@@ -512,31 +472,28 @@ def get_batch_status(request, session_id):
     Frontend polls this endpoint for progress updates.
     """
     try:
-        session_status = session_storage.get_session_status(session_id)
-        if not session_status:
+        if session_id not in BATCH_SESSIONS:
             return JsonResponse({'error': 'Session not found'}, status=404)
         
+        session = BATCH_SESSIONS[session_id]
+        status_data = session.to_dict()
+        
         # Add some helpful computed fields
-        session_status['is_processing'] = session_status['status'] == 'processing'
-        session_status['is_completed'] = session_status['status'] == 'completed'
-        session_status['is_failed'] = session_status['status'] == 'failed'
+        status_data['is_processing'] = session.status == 'processing'
+        status_data['is_completed'] = session.status == 'completed'
+        status_data['is_failed'] = session.status == 'failed'
         
         # Calculate estimated time remaining
-        if session_status['status'] == 'processing' and session_status['completed_pages'] > 0:
-            # Parse started_at if it's a string
-            started_at = session_status['started_at']
-            if isinstance(started_at, str):
-                started_at = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-            
-            elapsed = (datetime.utcnow() - started_at).total_seconds()
-            avg_time_per_page = elapsed / (session_status['completed_pages'] + session_status['failed_pages'])
-            remaining_pages = session_status['total_pages'] - session_status['completed_pages'] - session_status['failed_pages']
+        if session.status == 'processing' and session.completed_pages > 0:
+            elapsed = (datetime.utcnow() - session.started_at).total_seconds()
+            avg_time_per_page = elapsed / (session.completed_pages + session.failed_pages)
+            remaining_pages = session.total_pages - session.completed_pages - session.failed_pages
             estimated_remaining = avg_time_per_page * remaining_pages
-            session_status['estimated_remaining_seconds'] = round(estimated_remaining)
+            status_data['estimated_remaining_seconds'] = round(estimated_remaining)
         else:
-            session_status['estimated_remaining_seconds'] = None
+            status_data['estimated_remaining_seconds'] = None
         
-        return JsonResponse(session_status)
+        return JsonResponse(status_data)
         
     except Exception as e:
         print(f"[ERROR] Failed to get batch status: {str(e)}")
@@ -589,7 +546,12 @@ def list_batch_sessions(request):
     List all batch processing sessions (for debugging/monitoring).
     """
     try:
-        sessions_data = session_storage.list_sessions()
+        sessions_data = []
+        for session_id, session in BATCH_SESSIONS.items():
+            sessions_data.append(session.to_dict())
+        
+        # Sort by most recent first
+        sessions_data.sort(key=lambda x: x['started_at'], reverse=True)
         
         return JsonResponse({
             'sessions': sessions_data,
@@ -604,46 +566,28 @@ def list_batch_sessions(request):
 
 
 @csrf_exempt
-@require_http_methods(["GET"])
-def get_active_sessions(request):
-    """
-    Get only active (processing/initializing) batch sessions.
-    Used by frontend to restore sessions after page refresh.
-    """
-    try:
-        all_sessions = session_storage.list_sessions()
-        
-        # Filter to only active sessions (not completed or failed)
-        active_sessions = [
-            session for session in all_sessions 
-            if session.get('status') in ['initializing', 'processing']
-        ]
-        
-        return JsonResponse({
-            'sessions': active_sessions,
-            'total': len(active_sessions)
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to get active sessions: {str(e)}")
-        return JsonResponse({
-            'error': f'Failed to get active sessions: {str(e)}'
-        }, status=500)
-
-
-@csrf_exempt
 @require_http_methods(["DELETE"])
 def cleanup_batch_sessions(request):
     """
     Clean up old completed/failed sessions (for memory management).
     """
     try:
-        cleaned_count = session_storage.cleanup_old_sessions(hours=24)
+        # Keep only sessions from last 24 hours or still processing
+        cutoff_time = datetime.utcnow().timestamp() - 24 * 3600  # 24 hours ago
+        
+        sessions_to_remove = []
+        for session_id, session in BATCH_SESSIONS.items():
+            if (session.status in ['completed', 'failed', 'cancelled'] and 
+                session.updated_at.timestamp() < cutoff_time):
+                sessions_to_remove.append(session_id)
+        
+        for session_id in sessions_to_remove:
+            del BATCH_SESSIONS[session_id]
         
         return JsonResponse({
             'success': True,
-            'cleaned_up': cleaned_count,
-            'message': f'Cleaned up {cleaned_count} old sessions'
+            'cleaned_up': len(sessions_to_remove),
+            'remaining': len(BATCH_SESSIONS)
         })
         
     except Exception as e:

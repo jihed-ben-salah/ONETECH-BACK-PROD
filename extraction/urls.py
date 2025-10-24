@@ -22,7 +22,6 @@ from .batch_processing_views import (
     get_batch_status,
     cancel_batch_processing,
     list_batch_sessions,
-    get_active_sessions,
     cleanup_batch_sessions
 )
 
@@ -51,9 +50,5 @@ urlpatterns = [
     path('batch/status/<str:session_id>/', get_batch_status, name='batch-status'),
     path('batch/cancel/<str:session_id>/', cancel_batch_processing, name='batch-cancel'),
     path('batch/sessions/', list_batch_sessions, name='batch-sessions'),
-    path('batch/active/', get_active_sessions, name='batch-active-sessions'),
     path('batch/cleanup/', cleanup_batch_sessions, name='batch-cleanup'),
-    
-    # Backward compatibility aliases
-    path('extraction/batch-sessions/', list_batch_sessions, name='batch-sessions-legacy'),
 ]
