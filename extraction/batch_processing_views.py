@@ -37,7 +37,7 @@ except Exception:
     from ..process_forms import extract_data_from_image
 
 # MongoDB connection for session storage (production-ready)
-from .mongodb import get_mongodb_connection
+from .mongodb import get_database
 
 # In-memory session storage DEPRECATED - keeping for backward compatibility only
 BATCH_SESSIONS = {}
@@ -45,7 +45,7 @@ BATCH_SESSIONS = {}
 def get_sessions_collection():
     """Get MongoDB collection for batch sessions"""
     try:
-        db = get_mongodb_connection()
+        db = get_database()
         return db['batch_sessions']
     except Exception as e:
         print(f"[ERROR] Failed to connect to MongoDB for sessions: {e}")
