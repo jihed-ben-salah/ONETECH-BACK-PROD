@@ -206,12 +206,18 @@ class BatchProcessingSession:
         """Save session to MongoDB"""
         try:
             collection = get_sessions_collection()
-            if not collection:
+            if collection is None:
                 print(f"[WARNING] MongoDB not available, session {self.session_id} only in memory")
                 return
             
             session_data = self.to_dict()
             session_data['_id'] = self.session_id  # Use session_id as MongoDB _id
+            
+            # MongoDB requires string keys - convert pages_info integer keys to strings
+            if 'pages_info' in session_data and session_data['pages_info']:
+                session_data['pages_info'] = {
+                    str(k): v for k, v in session_data['pages_info'].items()
+                }
             
             # Upsert (update or insert)
             collection.replace_one(
@@ -228,7 +234,7 @@ class BatchProcessingSession:
         """Load session from MongoDB"""
         try:
             collection = get_sessions_collection()
-            if not collection:
+            if collection is None:
                 return None
             
             session_data = collection.find_one({'_id': session_id})
@@ -250,7 +256,17 @@ class BatchProcessingSession:
             session.processing_page = session_data.get('processing_page')
             session.documents = session_data.get('documents', [])
             session.errors = session_data.get('errors', [])
-            session.pages_info = session_data.get('pages_info', {})
+            
+            # Convert string keys back to integers for pages_info
+            pages_info = session_data.get('pages_info', {})
+            if pages_info:
+                session.pages_info = {
+                    int(k) if k.isdigit() else k: v 
+                    for k, v in pages_info.items()
+                }
+            else:
+                session.pages_info = {}
+            
             session.started_at = datetime.fromisoformat(session_data['started_at'])
             session.updated_at = datetime.fromisoformat(session_data['updated_at'])
             
