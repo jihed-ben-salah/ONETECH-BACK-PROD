@@ -448,3 +448,128 @@ class BulkDocumentExportView(APIView):
                 {'error': f'Failed to export documents: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class EnhancedExcelExportView(APIView):
+    """Export documents to enhanced Excel format with professional styling."""
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request):
+        """Export a single document by ID to enhanced Excel format."""
+        try:
+            from .excel_export import export_document_to_excel
+            
+            doc_id = request.query_params.get('id')
+            doc_type = request.query_params.get('type')
+            
+            if not doc_id:
+                return Response(
+                    {'error': 'Document ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not doc_type or doc_type not in ['Rebut', 'NPT', 'Kosu']:
+                return Response(
+                    {'error': 'Invalid or missing document type. Must be one of: Rebut, NPT, Kosu'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Fetch document
+            Model = get_model_by_type(doc_type)
+            document = Model.find_by_id(doc_id)
+            
+            if not document:
+                return Response(
+                    {'error': 'Document not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Serialize the document
+            serialized_doc = serialize_document(document)
+            
+            # Generate Excel file
+            excel_file = export_document_to_excel(serialized_doc, doc_type)
+            
+            # Create response
+            filename = serialized_doc.get('metadata', {}).get('filename', 'document')
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            response = HttpResponse(
+                excel_file.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}_{doc_type.lower()}_{timestamp}.xlsx"'
+            response['X-Export-Count'] = '1'
+            
+            return response
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to export document to Excel: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to export document: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """Export multiple documents to enhanced Excel format."""
+        try:
+            from .excel_export import export_documents_to_excel
+            
+            doc_type = request.data.get('type')
+            doc_ids = request.data.get('ids', [])
+            export_all = request.data.get('export_all', False)
+            
+            if not doc_type or doc_type not in ['Rebut', 'NPT', 'Kosu']:
+                return Response(
+                    {'error': 'Invalid or missing document type. Must be one of: Rebut, NPT, Kosu'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Fetch documents
+            Model = get_model_by_type(doc_type)
+            
+            if export_all:
+                documents = Model.find_all()
+            elif doc_ids and isinstance(doc_ids, list):
+                documents = [Model.find_by_id(doc_id) for doc_id in doc_ids]
+                documents = [doc for doc in documents if doc is not None]
+            else:
+                return Response(
+                    {'error': 'Either provide document IDs or set export_all to true'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not documents:
+                return Response(
+                    {'error': 'No documents found to export'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Serialize documents
+            serialized_docs = [serialize_document(doc) for doc in documents]
+            
+            # Generate Excel file
+            excel_file = export_documents_to_excel(serialized_docs, doc_type)
+            
+            # Create response
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            response = HttpResponse(
+                excel_file.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{doc_type.lower()}_export_{timestamp}.xlsx"'
+            response['X-Export-Count'] = str(len(documents))
+            
+            return response
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to export documents to Excel: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to export documents: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

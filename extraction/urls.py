@@ -8,7 +8,8 @@ from .document_views import (
     DocumentListCreateView,
     DocumentDetailView,
     DocumentExportView,
-    BulkDocumentExportView
+    BulkDocumentExportView,
+    EnhancedExcelExportView
 )
 print("[DEBUG] DocumentExportView imported successfully in extraction/urls.py")
 from .processing_views import (
@@ -37,6 +38,7 @@ urlpatterns = [
         path('export-documents/', DocumentExportView.as_view(), name='export-documents'),
     path('test-export/', test_export_view, name='test-export'),
     path('documents/export-bulk/', BulkDocumentExportView.as_view(), name='document-export-bulk'),
+    path('documents/export-excel/', EnhancedExcelExportView.as_view(), name='document-export-excel'),
     path('documents/<str:doc_id>/', DocumentDetailView.as_view(), name='document-detail'),
     
     # Complete PDF processing pipeline endpoints
