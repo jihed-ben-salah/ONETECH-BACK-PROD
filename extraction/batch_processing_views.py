@@ -235,11 +235,15 @@ class BatchProcessingSession:
         try:
             collection = get_sessions_collection()
             if collection is None:
+                print(f"[WARNING] MongoDB collection not available for session {session_id}")
                 return None
             
             session_data = collection.find_one({'_id': session_id})
             if not session_data:
+                print(f"[WARNING] Session {session_id} not found in MongoDB")
                 return None
+            
+            print(f"[DEBUG] Found session {session_id} in MongoDB with status={session_data.get('status')}, completed={session_data.get('completed_pages')}/{session_data.get('total_pages')}")
             
             # Reconstruct session object
             session = cls(
@@ -249,7 +253,7 @@ class BatchProcessingSession:
                 filename=session_data['filename']
             )
             
-            # Restore state
+            # Restore state (IMPORTANT: Override the __init__ defaults!)
             session.status = session_data.get('status', 'processing')
             session.completed_pages = session_data.get('completed_pages', 0)
             session.failed_pages = session_data.get('failed_pages', 0)
@@ -270,11 +274,13 @@ class BatchProcessingSession:
             session.started_at = datetime.fromisoformat(session_data['started_at'])
             session.updated_at = datetime.fromisoformat(session_data['updated_at'])
             
-            print(f"[DEBUG] Session {session_id} loaded from MongoDB")
+            print(f"[DEBUG] Session {session_id} loaded from MongoDB: status={session.status}, completed={session.completed_pages}/{session.total_pages}")
             return session
             
         except Exception as e:
             print(f"[ERROR] Failed to load session from MongoDB: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 
@@ -572,8 +578,20 @@ def get_batch_status(request, session_id):
         # First check in-memory cache (fastest)
         session = BATCH_SESSIONS.get(session_id)
         
-        # If not in memory, try loading from MongoDB (handles multiple workers)
-        if not session:
+        # CRITICAL FIX: If cached session is stale (initializing or old update), refresh from MongoDB
+        should_refresh = False
+        if session:
+            # Refresh if status is still "initializing" (means worker has old cached version)
+            if session.status == 'initializing':
+                should_refresh = True
+                print(f"[DEBUG] Session {session_id} in memory has status='initializing', refreshing from MongoDB")
+            # Also refresh if last update was more than 10 seconds ago (stale cache)
+            elif (datetime.utcnow() - session.updated_at).total_seconds() > 10:
+                should_refresh = True
+                print(f"[DEBUG] Session {session_id} cache is stale, refreshing from MongoDB")
+        
+        # Load from MongoDB if not in memory OR if cached version is stale
+        if not session or should_refresh:
             session = BatchProcessingSession.load_from_db(session_id)
             if session:
                 # Cache in memory for faster subsequent access
