@@ -1,0 +1,55 @@
+╔══════════════════════════════════════════════════════════════╗
+║           ONETECH MONGODB CONNECTION INFORMATION             ║
+╚══════════════════════════════════════════════════════════════╝
+
+🔐 CREDENTIALS:
+────────────────────────────────────────────────────────────
+Admin User:
+  Username: admin
+  Password: elepzia@Onetech?collab2025
+
+App User:
+  Username: onetech_user
+  Password: elepzia@Onetech?collab2025
+
+Database Name: onetech
+Port: 29991 (changed from default 27017 for security)
+
+────────────────────────────────────────────────────────────
+
+🔗 CONNECTION STRINGS:
+────────────────────────────────────────────────────────────
+Internal (from Docker network):
+  mongodb://onetech_user:elepzia@Onetech?collab2025@mongodb:29991/onetech?authSource=admin
+
+Local (from host machine):
+  mongodb://onetech_user:elepzia@Onetech?collab2025@localhost:29991/onetech?authSource=admin
+
+URL Encoded (for .env files):
+  mongodb://onetech_user:elepzia%40Onetech%3Fcollab2025@localhost:29991/onetech?authSource=admin
+
+────────────────────────────────────────────────────────────
+
+⚠️  SECURITY NOTES:
+────────────────────────────────────────────────────────────
+- Port 29991 is used instead of default 27017 for security
+- MongoDB is only accessible from within Docker network
+- External access requires VPN
+- Always use authSource=admin parameter
+
+────────────────────────────────────────────────────────────
+
+📋 TESTING CONNECTION:
+────────────────────────────────────────────────────────────
+# From host machine:
+docker exec -it onetech_mongodb mongosh -u admin -p
+
+# Or using connection string:
+docker exec -it onetech_mongodb mongosh "mongodb://onetech_user:elepzia@Onetech?collab2025@localhost:29991/onetech?authSource=admin"
+
+# In mongosh:
+use onetech
+show collections
+db.rebuts.countDocuments()
+
+────────────────────────────────────────────────────────────

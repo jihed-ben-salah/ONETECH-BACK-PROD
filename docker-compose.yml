@@ -1,5 +1,23 @@
 version: '3.9'
 services:
+  mongodb:
+    image: mongo:7.0
+    container_name: onetech_mongodb
+    restart: unless-stopped
+    ports:
+      - "29991:29991"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-onetech}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - ./mongodb-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - onetech_network
+    command: mongod --auth --bind_ip_all --port 29991
+
   extraction_api:
     build: .
     container_name: extraction_api
@@ -10,9 +28,21 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-pro}
-      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_URI: mongodb://${MONGO_APP_USERNAME:-onetech_user}:${MONGO_APP_PASSWORD}@mongodb:29991/${MONGODB_DB_NAME:-onetech}?authSource=admin
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-onetech}
       DEBUG: "false"
     volumes:
       - ./media:/app/media
+    depends_on:
+      - mongodb
+    networks:
+      - onetech_network
     restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+
+networks:
+  onetech_network:
+    driver: bridge

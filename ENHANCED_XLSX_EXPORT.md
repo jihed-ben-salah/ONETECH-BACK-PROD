@@ -249,3 +249,5 @@ For issues or questions, check:
 **Version:** 1.0
 **Dependencies:** openpyxl 3.1.2, Django 5.0.7
 
+
+
