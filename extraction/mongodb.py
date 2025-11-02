@@ -20,7 +20,11 @@ def get_mongodb_client() -> MongoClient:
         mongodb_uri = settings.MONGODB_URI
         if not mongodb_uri:
             raise ValueError("MONGODB_URI is not configured in settings")
+        
+        # Use simple connection - pymongo handles SSL/TLS automatically for mongodb+srv://
+        # This worked before, keeping it simple
         _client = MongoClient(mongodb_uri)
+    
     return _client
 
 
@@ -47,3 +51,12 @@ def close_connection():
         _client.close()
         _client = None
         _db = None
+
+
+def reset_connection():
+    """Reset MongoDB connection singleton. Useful when connection settings change."""
+    global _client, _db
+    if _client:
+        _client.close()
+    _client = None
+    _db = None
