@@ -128,17 +128,38 @@ class RebutExcelExporter:
         row += 1
         
         # Header fields in a 2-column layout
-        header_info = [
-            ("Filename:", metadata.get('filename', 'N/A')),
-            ("Document Type:", metadata.get('document_type', 'Rebut')),
-            ("Date:", header.get('date', 'N/A')),
-            ("Ligne:", header.get('ligne', 'N/A')),
-            ("OF Number:", header.get('of_number', 'N/A')),
-            ("Mat:", header.get('mat', 'N/A')),
-            ("Equipe:", header.get('equipe', 'N/A')),
-            ("Visa:", header.get('visa', 'N/A')),
-            ("Processed:", metadata.get('processed_at', 'N/A')),
-        ]
+        header_info = []
+        
+        # Add fields conditionally to avoid duplicates
+        header_info.append(("Filename:", metadata.get('filename', 'N/A')))
+        header_info.append(("Document Type:", metadata.get('document_type', 'Rebut')))
+        header_info.append(("Date:", header.get('date', 'N/A')))
+        
+        # Add Ligne or Code Ligne (but not both if they have the same value)
+        ligne_value = header.get('ligne')
+        code_ligne_value = header.get('code_ligne')
+        
+        if code_ligne_value and code_ligne_value != ligne_value:
+            # Both exist and are different - include both
+            header_info.append(("Ligne:", ligne_value or 'N/A'))
+            header_info.append(("Code Ligne:", code_ligne_value or 'N/A'))
+        elif code_ligne_value:
+            # Only code_ligne exists
+            header_info.append(("Code Ligne:", code_ligne_value or 'N/A'))
+        else:
+            # Only ligne exists (most common case for Rebut)
+            header_info.append(("Code Ligne:", ligne_value or 'N/A'))  # Display as "Code Ligne" as requested
+        
+        header_info.append(("OF Number:", header.get('of_number', 'N/A')))
+        header_info.append(("Mat:", header.get('mat_number', header.get('mat', 'N/A'))))
+        header_info.append(("Equipe:", header.get('equipe', 'N/A')))
+        
+        # Add JAP if it exists
+        if header.get('jap'):
+            header_info.append(("JAP:", header.get('jap', 'N/A')))
+        
+        header_info.append(("Visa:", header.get('visa', 'N/A')))
+        header_info.append(("Processed:", metadata.get('processed_at', 'N/A')))
         
         for i in range(0, len(header_info), 2):
             # First column pair
@@ -257,9 +278,22 @@ class RebutExcelExporter:
             header = data.get('header', {})
             items = data.get('items', [])
             
-            # Quick header info
+            # Quick header info - avoid duplicate ligne/code_ligne
+            ligne_value = header.get('ligne')
+            code_ligne_value = header.get('code_ligne')
+            
             ws[f'A{row}'] = f"Date: {header.get('date', 'N/A')}"
-            ws[f'E{row}'] = f"OF: {header.get('of_number', 'N/A')}"
+            
+            # Only show Code Ligne (avoid duplicate if both have same value)
+            if code_ligne_value and code_ligne_value != ligne_value:
+                ws[f'D{row}'] = f"Ligne: {ligne_value or 'N/A'}"
+                ws[f'F{row}'] = f"Code Ligne: {code_ligne_value or 'N/A'}"
+            elif code_ligne_value:
+                ws[f'D{row}'] = f"Code Ligne: {code_ligne_value or 'N/A'}"
+            else:
+                ws[f'D{row}'] = f"Code Ligne: {ligne_value or 'N/A'}"
+            
+            ws[f'G{row}'] = f"OF: {header.get('of_number', 'N/A')}"
             row += 2
             
             # Items table
@@ -804,6 +838,7 @@ def export_documents_to_excel(documents: List[Dict[str, Any]], doc_type: str) ->
         return exporter.export_multiple(documents)
     else:
         raise ValueError(f"Unsupported document type: {doc_type}")
+
 
 
 

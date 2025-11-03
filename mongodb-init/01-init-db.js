@@ -44,3 +44,4 @@ db.system_info.insertOne({
 });
 
 print('MongoDB initialization completed successfully');
+
