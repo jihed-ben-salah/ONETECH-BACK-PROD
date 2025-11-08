@@ -7,6 +7,7 @@ similar to how the frontend displays different document types.
 import io
 from datetime import datetime
 from typing import Dict, Any, List
+import re
 from openpyxl import Workbook
 from openpyxl.styles import (
     Font, PatternFill, Alignment, Border, Side
@@ -73,6 +74,48 @@ class ExcelStyler:
     def get_left_alignment():
         """Get left alignment."""
         return Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+
+def _try_convert_to_number(value: Any) -> Any:
+    """Attempt to convert string values to numeric types for Excel."""
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip().replace('\xa0', '')
+        if stripped == '':
+            return None
+        normalized = stripped.replace(' ', '').replace("'", '')
+        # Accept simple numeric formats with optional decimal separator
+        if re.fullmatch(r'-?\d+(?:[.,]\d+)?', normalized):
+            if normalized.count(',') == 1 and normalized.count('.') == 0:
+                normalized = normalized.replace(',', '.')
+            elif normalized.count('.') == 1 and normalized.count(',') == 0:
+                pass  # already decimal point
+            elif normalized.count('.') == 0 and normalized.count(',') == 0:
+                pass
+            else:
+                return None  # ambiguous format (both separators)
+            try:
+                number = float(normalized)
+                if number.is_integer():
+                    return int(number)
+                return number
+            except ValueError:
+                return None
+    return None
+
+
+def _set_cell_value(cell, value: Any):
+    """Set Excel cell value, converting numeric strings to numbers when possible."""
+    numeric_value = _try_convert_to_number(value)
+    if numeric_value is not None:
+        cell.value = numeric_value
+        if isinstance(numeric_value, float) and not numeric_value.is_integer():
+            cell.number_format = '#,##0.00'
+        else:
+            cell.number_format = '#,##0'
+    else:
+        cell.value = '' if value is None else value
 
 
 class RebutExcelExporter:
@@ -171,10 +214,11 @@ class RebutExcelExporter:
             ws[f'A{row}'].border = self.styler.get_border()
             
             ws.merge_cells(f'B{row}:E{row}')
-            ws[f'B{row}'] = value1
-            ws[f'B{row}'].font = self.styler.get_data_font()
-            ws[f'B{row}'].alignment = self.styler.get_left_alignment()
-            ws[f'B{row}'].border = self.styler.get_border()
+            value_cell = ws[f'B{row}']
+            _set_cell_value(value_cell, value1)
+            value_cell.font = self.styler.get_data_font()
+            value_cell.alignment = self.styler.get_left_alignment()
+            value_cell.border = self.styler.get_border()
             
             # Second column pair (if exists)
             if i + 1 < len(header_info):
@@ -186,10 +230,11 @@ class RebutExcelExporter:
                 ws[f'F{row}'].border = self.styler.get_border()
                 
                 ws.merge_cells(f'G{row}:K{row}')
-                ws[f'G{row}'] = value2
-                ws[f'G{row}'].font = self.styler.get_data_font()
-                ws[f'G{row}'].alignment = self.styler.get_left_alignment()
-                ws[f'G{row}'].border = self.styler.get_border()
+                value_cell_2 = ws[f'G{row}']
+                _set_cell_value(value_cell_2, value2)
+                value_cell_2.font = self.styler.get_data_font()
+                value_cell_2.alignment = self.styler.get_left_alignment()
+                value_cell_2.border = self.styler.get_border()
             
             row += 1
         
@@ -230,7 +275,7 @@ class RebutExcelExporter:
             for item_idx, item in enumerate(items):
                 for col_idx, col_name in enumerate(columns, start=1):
                     cell = ws.cell(row=row, column=col_idx)
-                    cell.value = item.get(col_name, '')
+                    _set_cell_value(cell, item.get(col_name, ''))
                     cell.font = self.styler.get_data_font()
                     cell.alignment = self.styler.get_left_alignment()
                     cell.border = self.styler.get_border()
@@ -317,7 +362,7 @@ class RebutExcelExporter:
                 for item in items:
                     for col_idx, col_name in enumerate(columns, start=1):
                         cell = ws.cell(row=row, column=col_idx)
-                        cell.value = item.get(col_name, '')
+                        _set_cell_value(cell, item.get(col_name, ''))
                         cell.font = self.styler.get_data_font()
                         cell.border = self.styler.get_border()
                     row += 1
@@ -392,10 +437,11 @@ class NPTExcelExporter:
             ws[f'A{row}'].border = self.styler.get_border()
             
             ws.merge_cells(f'B{row}:E{row}')
-            ws[f'B{row}'] = value1
-            ws[f'B{row}'].font = self.styler.get_data_font()
-            ws[f'B{row}'].alignment = self.styler.get_left_alignment()
-            ws[f'B{row}'].border = self.styler.get_border()
+            npt_value_cell = ws[f'B{row}']
+            _set_cell_value(npt_value_cell, value1)
+            npt_value_cell.font = self.styler.get_data_font()
+            npt_value_cell.alignment = self.styler.get_left_alignment()
+            npt_value_cell.border = self.styler.get_border()
             
             # Second column pair (if exists)
             if i + 1 < len(header_info):
@@ -407,10 +453,11 @@ class NPTExcelExporter:
                 ws[f'F{row}'].border = self.styler.get_border()
                 
                 ws.merge_cells(f'G{row}:L{row}')
-                ws[f'G{row}'] = value2
-                ws[f'G{row}'].font = self.styler.get_data_font()
-                ws[f'G{row}'].alignment = self.styler.get_left_alignment()
-                ws[f'G{row}'].border = self.styler.get_border()
+                npt_value_cell_2 = ws[f'G{row}']
+                _set_cell_value(npt_value_cell_2, value2)
+                npt_value_cell_2.font = self.styler.get_data_font()
+                npt_value_cell_2.alignment = self.styler.get_left_alignment()
+                npt_value_cell_2.border = self.styler.get_border()
             
             row += 1
         
@@ -450,7 +497,7 @@ class NPTExcelExporter:
             for event_idx, event in enumerate(events):
                 for col_idx, col_name in enumerate(columns, start=1):
                     cell = ws.cell(row=row, column=col_idx)
-                    cell.value = event.get(col_name, '')
+                    _set_cell_value(cell, event.get(col_name, ''))
                     cell.font = self.styler.get_data_font()
                     cell.alignment = self.styler.get_left_alignment()
                     cell.border = self.styler.get_border()
@@ -523,7 +570,7 @@ class NPTExcelExporter:
                 for event in events:
                     for col_idx, col_name in enumerate(columns, start=1):
                         cell = ws.cell(row=row, column=col_idx)
-                        cell.value = event.get(col_name, '')
+                        _set_cell_value(cell, event.get(col_name, ''))
                         cell.font = self.styler.get_data_font()
                         cell.border = self.styler.get_border()
                     row += 1
@@ -598,10 +645,11 @@ class KosuExcelExporter:
             ws[f'A{row}'].border = self.styler.get_border()
             
             ws.merge_cells(f'B{row}:E{row}')
-            ws[f'B{row}'] = value1
-            ws[f'B{row}'].font = self.styler.get_data_font()
-            ws[f'B{row}'].alignment = self.styler.get_left_alignment()
-            ws[f'B{row}'].border = self.styler.get_border()
+            header_value_cell = ws[f'B{row}']
+            _set_cell_value(header_value_cell, value1)
+            header_value_cell.font = self.styler.get_data_font()
+            header_value_cell.alignment = self.styler.get_left_alignment()
+            header_value_cell.border = self.styler.get_border()
             
             if i + 1 < len(header_info):
                 label2, value2 = header_info[i + 1]
@@ -612,10 +660,11 @@ class KosuExcelExporter:
                 ws[f'F{row}'].border = self.styler.get_border()
                 
                 ws.merge_cells(f'G{row}:L{row}')
-                ws[f'G{row}'] = value2
-                ws[f'G{row}'].font = self.styler.get_data_font()
-                ws[f'G{row}'].alignment = self.styler.get_left_alignment()
-                ws[f'G{row}'].border = self.styler.get_border()
+                header_value_cell_2 = ws[f'G{row}']
+                _set_cell_value(header_value_cell_2, value2)
+                header_value_cell_2.font = self.styler.get_data_font()
+                header_value_cell_2.alignment = self.styler.get_left_alignment()
+                header_value_cell_2.border = self.styler.get_border()
             
             row += 1
         
@@ -660,7 +709,7 @@ class KosuExcelExporter:
                 for item_idx, item in enumerate(section_data):
                     for col_idx, col_name in enumerate(columns, start=1):
                         cell = ws.cell(row=row, column=col_idx)
-                        cell.value = item.get(col_name, '')
+                        _set_cell_value(cell, item.get(col_name, ''))
                         cell.font = self.styler.get_data_font()
                         cell.alignment = self.styler.get_left_alignment()
                         cell.border = self.styler.get_border()
@@ -775,7 +824,7 @@ class KosuExcelExporter:
                     for item in section_data:
                         for col_idx, col_name in enumerate(columns, start=1):
                             cell = ws.cell(row=row, column=col_idx)
-                            cell.value = item.get(col_name, '')
+                            _set_cell_value(cell, item.get(col_name, ''))
                             cell.font = self.styler.get_data_font()
                             cell.border = self.styler.get_border()
                         row += 1
